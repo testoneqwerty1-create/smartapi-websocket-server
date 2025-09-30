@@ -1130,7 +1130,7 @@ def update_excel_live_data(): # Updates the Google Sheet with live data and Swin
             def queue_update(col_letter, value, number_format_pattern=None, bg_color='SENTINEL', is_ltp=False):
                 if not col_letter: return
                 cell_a1 = f"{col_letter}{row_num}"
-                cell_range = {"sheetId": dashboard_sheet_id, "startRowIndex": row_num - 1, "endRowIndex": row, "startColumnIndex": col_to_num(col_letter) - 1, "endColumnIndex": col_to_num(col_letter)}
+                cell_range = {"sheetId": dashboard_sheet_id, "startRowIndex": row_num - 1, "endRowIndex": row_num, "startColumnIndex": col_to_num(col_letter) - 1, "endColumnIndex": col_to_num(col_letter)}
                 cell_data, fields, user_entered_value = {}, [], {}
                 if isinstance(value, (int, float)): user_entered_value["numberValue"] = value
                 else: user_entered_value["stringValue"] = str(value)
