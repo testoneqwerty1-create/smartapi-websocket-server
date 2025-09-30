@@ -50,7 +50,7 @@ if os.path.exists("/etc/secrets/creds.json"): # Set the path to the Google crede
     JSON_KEY_FILE_PATH = "/etc/secrets/creds.json"
 else:
     current_dir = os.path.dirname(__file__) if "__file__" in locals() else os.getcwd()
-    JSON_KEY_FILE_PATH = os.path.join(current_dir, "the-money-method-ad6d7-6d23c192b74e.json")
+    JSON_KEY_FILE_PATH = os.path.join(current_dir, "the-money-method-ad6d7-a4c7c213158a.json")
 SCOPE = ["https://spreadsheets.google.com/feeds", "https://www.googleapis.com/auth/spreadsheets", "https://www.googleapis.com/auth/drive"]
 smart_api_obj, smart_ws, gsheet, Dashboard, ATHCache, OrdersSheet = None, None, None, None, None, None # Global Objects (Initialized in main logic)
 data_lock = threading.Lock() # Threading Lock for Data Safety
