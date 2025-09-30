@@ -1,146 +1,569 @@
 [
   {
-    "name": "Avenue Supermar",
+    "name": "Federal Bank",
     "period": "Q1 FY25-26",
     "date": "",
-    "revenue": "16,360",
-    "net": "773",
-    "revGrowth": "10%",
-    "netGrowth": "40%"
+    "revenue": "7,151",
+    "net": "947",
+    "revGrowth": "0.60%",
+    "netGrowth": "-14%"
   },
   {
-    "name": "Elecon Eng",
+    "name": "Sarda Energy",
     "period": "Q1 FY25-26",
     "date": "",
-    "revenue": "491",
-    "net": "175",
-    "revGrowth": "-38%",
-    "netGrowth": "21%"
+    "revenue": "1,633",
+    "net": "423",
+    "revGrowth": "31%",
+    "netGrowth": "345%"
   },
   {
-    "name": "Madhya Bharat A",
+    "name": "Finolex Ind",
     "period": "Q1 FY25-26",
     "date": "",
-    "revenue": "410",
-    "net": "28",
-    "revGrowth": "38%",
-    "netGrowth": "100%"
-  },
-  {
-    "name": "AB Money",
-    "period": "Q1 FY25-26",
-    "date": "",
-    "revenue": "113",
-    "net": "15",
-    "revGrowth": "15%",
-    "netGrowth": "66%"
-  },
-  {
-    "name": "Nath Bio-Genes",
-    "period": "Q1 FY25-26",
-    "date": "",
-    "revenue": "284",
-    "net": "37",
-    "revGrowth": "446%",
-    "netGrowth": "3,600%"
-  },
-  {
-    "name": "TCS",
-    "period": "Q1 FY25-26",
-    "date": "",
-    "revenue": "63,437",
-    "net": "12,819",
-    "revGrowth": "-1%",
-    "netGrowth": "4%"
-  },
-  {
-    "name": "Indian Renew",
-    "period": "Q1 FY25-26",
-    "date": "",
-    "revenue": "1,947",
-    "net": "247",
-    "revGrowth": "2%",
-    "netGrowth": "-50%"
-  },
-  {
-    "name": "Tata Elxsi",
-    "period": "Q1 FY25-26",
-    "date": "",
-    "revenue": "892",
-    "net": "144",
-    "revGrowth": "-1%",
-    "netGrowth": "-16%"
-  },
-  {
-    "name": "Anand Rathi",
-    "period": "Q1 FY25-26",
-    "date": "",
-    "revenue": "265",
+    "revenue": "1,043",
     "net": "93",
-    "revGrowth": "24%",
-    "netGrowth": "29%"
+    "revGrowth": "-11%",
+    "netGrowth": "-35%"
   },
   {
-    "name": "Eimco Elecon",
+    "name": "Medplus Health",
     "period": "Q1 FY25-26",
     "date": "",
-    "revenue": "68",
+    "revenue": "184",
     "net": "14",
+    "revGrowth": "-8%",
+    "netGrowth": "0.00%"
+  },
+  {
+    "name": "Epigral",
+    "period": "Q1 FY25-26",
+    "date": "",
+    "revenue": "607",
+    "net": "160",
+    "revGrowth": "-3%",
+    "netGrowth": "83%"
+  },
+  {
+    "name": "Ajax Eng",
+    "period": "Q1 FY25-26",
+    "date": "",
+    "revenue": "467",
+    "net": "53",
+    "revGrowth": "-38%",
+    "netGrowth": "-41%"
+  },
+  {
+    "name": "Balaji Amines",
+    "period": "Q1 FY25-26",
+    "date": "",
+    "revenue": "358",
+    "net": "37",
+    "revGrowth": "1%",
+    "netGrowth": "-7%"
+  },
+  {
+    "name": "Guj Amb Exports",
+    "period": "Q1 FY25-26",
+    "date": "",
+    "revenue": "1,291",
+    "net": "65",
+    "revGrowth": "1%",
+    "netGrowth": "103%"
+  },
+  {
+    "name": "Neogen",
+    "period": "Q1 FY25-26",
+    "date": "",
+    "revenue": "187",
+    "net": "10",
+    "revGrowth": "-7%",
+    "netGrowth": "400%"
+  },
+  {
+    "name": "Advanced Enzyme",
+    "period": "Q1 FY25-26",
+    "date": "",
+    "revenue": "186",
+    "net": "40",
+    "revGrowth": "11%",
+    "netGrowth": "48%"
+  },
+  {
+    "name": "Vishnu Chemical",
+    "period": "Q1 FY25-26",
+    "date": "",
+    "revenue": "347",
+    "net": "32",
+    "revGrowth": "-11%",
+    "netGrowth": "-17%"
+  },
+  {
+    "name": "Stylam Ind",
+    "period": "Q1 FY25-26",
+    "date": "",
+    "revenue": "283",
+    "net": "28",
     "revGrowth": "6%",
     "netGrowth": "-6%"
   },
   {
-    "name": "GTPL Hathway",
+    "name": "UTKARSHBNK",
     "period": "Q1 FY25-26",
     "date": "",
-    "revenue": "904",
-    "net": "7",
-    "revGrowth": "1%",
+    "revenue": "881",
+    "net": "-239",
+    "revGrowth": "0.11%",
+    "netGrowth": "-8,066%"
+  },
+  {
+    "name": "Sirca Paints",
+    "period": "Q1 FY25-26",
+    "date": "",
+    "revenue": "114",
+    "net": "14",
+    "revGrowth": "12%",
+    "netGrowth": "0.00%"
+  },
+  {
+    "name": "Indo Thai Secu",
+    "period": "Q1 FY25-26",
+    "date": "",
+    "revenue": "14",
+    "net": "8",
+    "revGrowth": "133%",
+    "netGrowth": "366%"
+  },
+  {
+    "name": "Sportking India",
+    "period": "Q1 FY25-26",
+    "date": "",
+    "revenue": "586",
+    "net": "35",
+    "revGrowth": "-6%",
+    "netGrowth": "-2%"
+  },
+  {
+    "name": "Bhageria Indu",
+    "period": "Q1 FY25-26",
+    "date": "",
+    "revenue": "157",
+    "net": "11",
+    "revGrowth": "-14%",
+    "netGrowth": "-26%"
+  },
+  {
+    "name": "Urja Global",
+    "period": "Q1 FY25-26",
+    "date": "",
+    "revenue": "19",
+    "net": "1",
+    "revGrowth": "11%",
+    "netGrowth": "0.00%"
+  },
+  {
+    "name": "Albert David",
+    "period": "Q1 FY25-26",
+    "date": "",
+    "revenue": "71",
+    "net": "8",
+    "revGrowth": "-5%",
+    "netGrowth": "180%"
+  },
+  {
+    "name": "Mirza Intl",
+    "period": "Q1 FY25-26",
+    "date": "",
+    "revenue": "142",
+    "net": "18",
+    "revGrowth": "16%",
+    "netGrowth": "550%"
+  },
+  {
+    "name": "Exxaro Tiles",
+    "period": "Q1 FY25-26",
+    "date": "",
+    "revenue": "63",
+    "net": "0.00",
+    "revGrowth": "-30%",
+    "netGrowth": "-100%"
+  },
+  {
+    "name": "Mawana Sugars",
+    "period": "Q1 FY25-26",
+    "date": "",
+    "revenue": "401",
+    "net": "-14",
+    "revGrowth": "16%",
+    "netGrowth": "-122%"
+  },
+  {
+    "name": "AMJ Land",
+    "period": "Q1 FY25-26",
+    "date": "",
+    "revenue": "14",
+    "net": "4",
+    "revGrowth": "-44%",
+    "netGrowth": "-63%"
+  },
+  {
+    "name": "Damodar Ind",
+    "period": "Q1 FY25-26",
+    "date": "",
+    "revenue": "103",
+    "net": "2",
+    "revGrowth": "21%",
+    "netGrowth": "-33%"
+  },
+  {
+    "name": "ITC",
+    "period": "Q1 FY25-26",
+    "date": "",
+    "revenue": "21,495",
+    "net": "5,275",
+    "revGrowth": "14%",
+    "netGrowth": "-73%"
+  },
+  {
+    "name": "Adani Power",
+    "period": "Q1 FY25-26",
+    "date": "",
+    "revenue": "14,109",
+    "net": "3,305",
+    "revGrowth": "-0.90%",
+    "netGrowth": "27%"
+  },
+  {
+    "name": "Tata Power",
+    "period": "Q1 FY25-26",
+    "date": "",
+    "revenue": "18,035",
+    "net": "1,133",
+    "revGrowth": "5%",
+    "netGrowth": "-7%"
+  },
+  {
+    "name": "Godrej Prop",
+    "period": "Q1 FY25-26",
+    "date": "",
+    "revenue": "435",
+    "net": "626",
+    "revGrowth": "-79%",
+    "netGrowth": "51%"
+  },
+  {
+    "name": "Tube Investment",
+    "period": "Q1 FY25-26",
+    "date": "",
+    "revenue": "5,309",
+    "net": "303",
+    "revGrowth": "3%",
+    "netGrowth": "91%"
+  },
+  {
+    "name": "UPL",
+    "period": "Q1 FY25-26",
+    "date": "",
+    "revenue": "9,216",
+    "net": "-194",
+    "revGrowth": "-40%",
+    "netGrowth": "-117%"
+  },
+  {
+    "name": "GlaxoSmithKline",
+    "period": "Q1 FY25-26",
+    "date": "",
+    "revenue": "805",
+    "net": "205",
+    "revGrowth": "-17%",
+    "netGrowth": "-22%"
+  },
+  {
+    "name": "Narayana Hruda",
+    "period": "Q1 FY25-26",
+    "date": "",
+    "revenue": "1,507",
+    "net": "197",
+    "revGrowth": "2%",
+    "netGrowth": "0.00%"
+  },
+  {
+    "name": "MCX India",
+    "period": "Q1 FY25-26",
+    "date": "",
+    "revenue": "373",
+    "net": "204",
+    "revGrowth": "28%",
+    "netGrowth": "51%"
+  },
+  {
+    "name": "Honeywell Autom",
+    "period": "Q1 FY25-26",
+    "date": "",
+    "revenue": "1,183",
+    "net": "125",
+    "revGrowth": "6%",
+    "netGrowth": "-10%"
+  },
+  {
+    "name": "Delhivery",
+    "period": "Q1 FY25-26",
+    "date": "",
+    "revenue": "2,128",
+    "net": "114",
+    "revGrowth": "5%",
+    "netGrowth": "770%"
+  },
+  {
+    "name": "LIC Housing Fin",
+    "period": "Q1 FY25-26",
+    "date": "",
+    "revenue": "7,250",
+    "net": "1,364",
+    "revGrowth": "-0.77%",
+    "netGrowth": "-0.80%"
+  },
+  {
+    "name": "Ratnamani Metal",
+    "period": "Q1 FY25-26",
+    "date": "",
+    "revenue": "1,152",
+    "net": "127",
+    "revGrowth": "-32%",
+    "netGrowth": "-37%"
+  },
+  {
+    "name": "Capri Global",
+    "period": "Q1 FY25-26",
+    "date": "",
+    "revenue": "1,004",
+    "net": "175",
+    "revGrowth": "4%",
+    "netGrowth": "-1%"
+  },
+  {
+    "name": "Kirloskar Bros",
+    "period": "Q1 FY25-26",
+    "date": "",
+    "revenue": "979",
+    "net": "71",
+    "revGrowth": "-23%",
+    "netGrowth": "-42%"
+  },
+  {
+    "name": "Alivus Life",
+    "period": "Q1 FY25-26",
+    "date": "",
+    "revenue": "602",
+    "net": "122",
+    "revGrowth": "-7%",
+    "netGrowth": "-14%"
+  },
+  {
+    "name": "G R Infra",
+    "period": "Q1 FY25-26",
+    "date": "",
+    "revenue": "1,826",
+    "net": "216",
+    "revGrowth": "-8%",
     "netGrowth": "-41%"
   },
   {
-    "name": "5paisa Capita",
+    "name": "JK Lakshmi Cem",
     "period": "Q1 FY25-26",
     "date": "",
-    "revenue": "78",
-    "net": "12",
-    "revGrowth": "9%",
-    "netGrowth": "20%"
+    "revenue": "1,741",
+    "net": "150",
+    "revGrowth": "-8%",
+    "netGrowth": "-19%"
   },
   {
-    "name": "Umiya Buildcon",
+    "name": "Shakti Pumps",
     "period": "Q1 FY25-26",
     "date": "",
-    "revenue": "13",
-    "net": "31",
-    "revGrowth": "0.00%",
+    "revenue": "623",
+    "net": "97",
+    "revGrowth": "-6%",
+    "netGrowth": "-11%"
+  },
+  {
+    "name": "Shriram Pistons",
+    "period": "Q1 FY25-26",
+    "date": "",
+    "revenue": "963",
+    "net": "135",
+    "revGrowth": "-2%",
+    "netGrowth": "-11%"
+  },
+  {
+    "name": "PC Jeweller",
+    "period": "Q1 FY25-26",
+    "date": "",
+    "revenue": "725",
+    "net": "162",
+    "revGrowth": "3%",
+    "netGrowth": "70%"
+  },
+  {
+    "name": "Graphite India",
+    "period": "Q1 FY25-26",
+    "date": "",
+    "revenue": "665",
+    "net": "133",
+    "revGrowth": "-0.15%",
+    "netGrowth": "171%"
+  },
+  {
+    "name": "RamkrishnaForge",
+    "period": "Q1 FY25-26",
+    "date": "",
+    "revenue": "1,015",
+    "net": "18",
+    "revGrowth": "7%",
+    "netGrowth": "-91%"
+  },
+  {
+    "name": "Privi Special",
+    "period": "Q1 FY25-26",
+    "date": "",
+    "revenue": "559",
+    "net": "58",
+    "revGrowth": "-8%",
+    "netGrowth": "-9%"
+  },
+  {
+    "name": "Jupiter Life",
+    "period": "Q1 FY25-26",
+    "date": "",
+    "revenue": "348",
+    "net": "44",
+    "revGrowth": "6%",
+    "netGrowth": "-2%"
+  },
+  {
+    "name": "Healthcare Glob",
+    "period": "Q1 FY25-26",
+    "date": "",
+    "revenue": "613",
+    "net": "5",
+    "revGrowth": "4%",
+    "netGrowth": "-28%"
+  },
+  {
+    "name": "Symphony",
+    "period": "Q1 FY25-26",
+    "date": "",
+    "revenue": "251",
+    "net": "42",
+    "revGrowth": "-48%",
+    "netGrowth": "-46%"
+  },
+  {
+    "name": "Aditya Vision",
+    "period": "Q1 FY25-26",
+    "date": "",
+    "revenue": "940",
+    "net": "55",
+    "revGrowth": "93%",
+    "netGrowth": "243%"
+  },
+  {
+    "name": "Go Fashion",
+    "period": "Q1 FY25-26",
+    "date": "",
+    "revenue": "223",
+    "net": "22",
+    "revGrowth": "8%",
+    "netGrowth": "10%"
+  },
+  {
+    "name": "Guj Themis",
+    "period": "Q1 FY25-26",
+    "date": "",
+    "revenue": "36",
+    "net": "9",
+    "revGrowth": "-5%",
+    "netGrowth": "-25%"
+  },
+  {
+    "name": "Steel Str Wheel",
+    "period": "Q1 FY25-26",
+    "date": "",
+    "revenue": "1,187",
+    "net": "47",
+    "revGrowth": "-3%",
+    "netGrowth": "-22%"
+  },
+  {
+    "name": "Digitide Solut",
+    "period": "Q1 FY25-26",
+    "date": "",
+    "revenue": "736",
+    "net": "10",
+    "revGrowth": "0.41%",
+    "netGrowth": "1,100%"
+  },
+  {
+    "name": "RPSG VENTURES",
+    "period": "Q1 FY25-26",
+    "date": "",
+    "revenue": "2,971",
+    "net": "248",
+    "revGrowth": "16%",
+    "netGrowth": "676%"
+  },
+  {
+    "name": "Taj GVK Hotels",
+    "period": "Q1 FY25-26",
+    "date": "",
+    "revenue": "106",
+    "net": "36",
+    "revGrowth": "-15%",
+    "netGrowth": "24%"
+  },
+  {
+    "name": "Sangam India",
+    "period": "Q1 FY25-26",
+    "date": "",
+    "revenue": "790",
+    "net": "2",
+    "revGrowth": "7%",
+    "netGrowth": "-80%"
+  },
+  {
+    "name": "Baazar Style",
+    "period": "Q1 FY25-26",
+    "date": "",
+    "revenue": "378",
+    "net": "2",
+    "revGrowth": "9%",
+    "netGrowth": "133%"
+  },
+  {
+    "name": "Hester Bio",
+    "period": "Q1 FY25-26",
+    "date": "",
+    "revenue": "84",
+    "net": "16",
+    "revGrowth": "2%",
     "netGrowth": "--"
   },
   {
-    "name": "DPSC",
+    "name": "Pudumjee Paper",
     "period": "Q1 FY25-26",
     "date": "",
-    "revenue": "164",
-    "net": "3",
-    "revGrowth": "19%",
-    "netGrowth": "250%"
+    "revenue": "196",
+    "net": "36",
+    "revGrowth": "3%",
+    "netGrowth": "89%"
   },
   {
-    "name": "Arihant Capital",
+    "name": "Century Enka",
     "period": "Q1 FY25-26",
     "date": "",
-    "revenue": "51",
-    "net": "12",
-    "revGrowth": "10%",
-    "netGrowth": "33%"
-  },
-  {
-    "name": "MIC Electronics",
-    "period": "Q1 FY25-26",
-    "date": "",
-    "revenue": "12",
-    "net": "2",
-    "revGrowth": "-73%",
-    "netGrowth": "-50%"
+    "revenue": "402",
+    "net": "15",
+    "revGrowth": "-9%",
+    "netGrowth": "114%"
   }
 ]
