@@ -734,7 +734,7 @@ def check_and_update_price_volume_setups(): # MODIFIED: Checks for setups, forma
         # Get consolidated signals and precise candle objects
         pct_down_str, pct_down_candles = get_consolidated_signals(three_pct_down_candidates)
         high_vol_str, high_vol_candles = get_consolidated_signals(high_vol_candidates)
-        highest_up_str, highest_up_candles = get_consolidated_signals(highest_up_candidates)
+        highest_up_str, highest_up_candles = get_consolidated_signals(highest_up_candles)
 
         for entry in symbol_entries:
             row = entry["row"]
@@ -1020,10 +1020,10 @@ def scan_sheet_for_all_symbols(Dashboard, ATHCache): # Unified function to scan 
         last_row_focus, last_row_full = get_last_row_in_column(Dashboard, FOCUS_SYMBOL_COL), get_last_row_in_column(Dashboard, FULL_SYMBOL_COL)
         max_row_dashboard = max(last_row_focus, last_row_full)
         logger.info(f"Scanning Dashboard up to row {max_row_dashboard}...")
-        for row in range(START_ROW_DATA, max_row_dashboard + 20):
+        for row in range(START_ROW_DATA, max_row_dashboard + 1):
             def process_symbol(symbol, exchange, row_num, token_col, block_details):
                 symbol_clean, symbol_col = str(symbol).strip().upper(), block_details.get('symbol_col')
-                if not symbol or not exchange or symbol_clean == 'SYMBOL': return
+                if not symbol or not exchange or symbol_clean == 'SYMBOL' or 'price' in str(symbol).lower(): return
                 cache_key = (row_num, symbol_col)
                 if scan_memory_cache.get(cache_key) != symbol_clean:
                     logger.info(f"New or changed symbol '{symbol_clean}' found at {cache_key}. Fetching new details.")
@@ -1051,7 +1051,7 @@ def scan_sheet_for_all_symbols(Dashboard, ATHCache): # Unified function to scan 
             exchange_3pct, symbol_3pct = get_cell_value(all_dashboard_values, row, PCT_EXCHANGE_COL_3PCT), get_cell_value(all_dashboard_values, row, PCT_SYMBOL_COL_3PCT)
             if exchange_3pct and symbol_3pct: process_symbol(symbol_3pct, exchange_3pct, row, PCT_TOKEN_COL_3PCT, {'setup_type': '3PCT', 'symbol_col': PCT_SYMBOL_COL_3PCT})
         max_row_ath_cache_data = len(all_ath_cache_values) if all_ath_cache_values else 0
-        rows_to_check_ath_cache, token_cols_to_check = max(max_row_dashboard + 20, max_row_ath_cache_data + 1), [ATH_CACHE_Y_COL_DASH, ATH_CACHE_Z_COL_DASH]
+        rows_to_check_ath_cache, token_cols_to_check = max(max_row_dashboard + 1, max_row_ath_cache_data + 1), [ATH_CACHE_Y_COL_DASH, ATH_CACHE_Z_COL_DASH]
         for row_idx in range(rows_to_check_ath_cache):
             row_num = row_idx + 1
             for col_letter in token_cols_to_check:
@@ -1130,7 +1130,7 @@ def update_excel_live_data(): # Updates the Google Sheet with live data and Swin
             def queue_update(col_letter, value, number_format_pattern=None, bg_color='SENTINEL', is_ltp=False):
                 if not col_letter: return
                 cell_a1 = f"{col_letter}{row_num}"
-                cell_range = {"sheetId": dashboard_sheet_id, "startRowIndex": row_num - 1, "endRowIndex": row_num, "startColumnIndex": col_to_num(col_letter) - 1, "endColumnIndex": col_to_num(col_letter)}
+                cell_range = {"sheetId": dashboard_sheet_id, "startRowIndex": row_num - 1, "endRowIndex": row, "startColumnIndex": col_to_num(col_letter) - 1, "endColumnIndex": col_to_num(col_letter)}
                 cell_data, fields, user_entered_value = {}, [], {}
                 if isinstance(value, (int, float)): user_entered_value["numberValue"] = value
                 else: user_entered_value["stringValue"] = str(value)
@@ -1632,3 +1632,4 @@ def run_threaded_logic(): # Starts the main application logic in a separate thre
 if __name__ == "__main__": # Main entry point for Flask + Threaded Logic.
     run_threaded_logic()
     app.run(host="0.0.0.0", port=int(os.environ.get("PORT", 8080)))
+
