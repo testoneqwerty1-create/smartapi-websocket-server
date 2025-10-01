@@ -108,12 +108,14 @@ SETUP_MAX_ROW = 17
 
 # --- Helper and Utility Functions ---
 def get_ist_time(): return datetime.datetime.now(ZoneInfo("Asia/Kolkata")) # Returns the current time in Indian Standard Time.
-def is_alert_hours(): # NEW: Checks if the current time is within the alert-triggering window.
+def is_alert_hours(): # MODIFIED: Checks if the current time is within the standard market hours.
     now = get_ist_time()
     if now.weekday() > 4: return False # It's Saturday or Sunday
-    if now.weekday() == 0 and now.time() < datetime.time(9, 15): return False # Monday before 9:15 AM
-    if now.weekday() == 4 and now.time() > datetime.time(16, 0): return False # Friday after 4:00 PM
-    return True # It's within the allowed time
+    market_open = datetime.time(9, 15)
+    market_close = datetime.time(15, 30)
+    if market_open <= now.time() <= market_close:
+        return True # It's within market hours
+    return False # It's outside market hours
 def normalize_status(api_status): # Maps raw API status strings to a user-friendly, unified format.
     if not api_status or not isinstance(api_status, str): return 'Unknown'
     status_lower = api_status.lower()
@@ -743,10 +745,7 @@ def check_and_update_breakdown_status(): # Checks for a change in breakdown stat
                 previous_status = str(previous_breakdown_state.get(cell_key, ""))
                 is_breakdown_now = "yes" in current_status.lower()
                 was_breakdown_before = "yes" in previous_status.lower()
-                # --- MODIFICATION START ---
-                # Added 'and is_alert_hours()' to ensure alerts are only triggered during market hours.
                 if is_breakdown_now and not was_breakdown_before and is_alert_hours():
-                # --- MODIFICATION END ---
                     logger.info(f"!!! NEW BREAKDOWN DETECTED for {entry['symbol']} on row {row} in column {status_col_letter} !!!")
                     breakdown_detected_this_cycle = True
                 previous_breakdown_state[cell_key] = current_status
@@ -967,126 +966,128 @@ def scan_sheet_for_all_symbols(Dashboard, ATHCache): # Unified function to scan 
     return local_dashboard_details, local_orh_setup_details, local_3pct_setup_details, all_tokens_found
 def update_excel_live_data(): # Updates the Google Sheet with live data and Swing Low calculation.
     global cells_to_clear_color
+    # --- MODIFICATION START ---
     with data_lock:
+    # --- MODIFICATION END ---
         dashboard_details_copy = excel_dashboard_details.copy()
         monthly_high_cache_copy = monthly_high_cache.copy()
-    if not smart_ws or not smart_ws._is_connected_flag:
-        logger.warning("WebSocket not connected. Skipping Google Sheet update."); return
-    requests, cells_to_color_this_cycle = [], set()
-    GREEN_COLOR, RED_COLOR, YELLOW_COLOR = (149, 203, 186), (254, 112, 112), (249, 203, 156)
-    dashboard_sheet_id = Dashboard.id
-    if cells_to_clear_color:
-        for cell_a1 in cells_to_clear_color:
-            col_letter, row_num = ''.join(filter(str.isalpha, cell_a1)), int(''.join(filter(str.isdigit, cell_a1)))
-            cell_range = {"sheetId": dashboard_sheet_id, "startRowIndex": row_num - 1, "endRowIndex": row_num, "startColumnIndex": col_to_num(col_letter) - 1, "endColumnIndex": col_to_num(col_letter)}
-            requests.append({"repeatCell": {"range": cell_range, "cell": {"userEnteredFormat": {"backgroundColor": rgb_to_float(None)}}, "fields": "userEnteredFormat.backgroundColor"}})
-    cells_to_clear_color.clear()
-    input_ranges = []
-    for list_of_details in dashboard_details_copy.values():
-        for details in list_of_details:
-            row_num = details['row']
-            if details.get("symbol_col"): input_ranges.append(f'{details["symbol_col"]}{row_num}')
-            if details.get('block_type') == "Full Positions":
-                if details.get("price_col"): input_ranges.append(f'{details["price_col"]}{row_num}')
-                if details.get("qty_col"): input_ranges.append(f'{details["qty_col"]}{row_num}')
-                if details.get("entry_date_col"): input_ranges.append(f'{details["entry_date_col"]}{row_num}')
-                if details.get("swing_low_input_col"): input_ranges.append(f'{details["swing_low_input_col"]}{row_num}')
-                input_ranges.append(f'{MONTH_SORT_COL}{row_num}')
-    input_data = {}
-    if input_ranges:
-        try:
-            unique_ranges = list(set(input_ranges))
-            fetched_values = Dashboard.batch_get(unique_ranges)
-            fetched_map = {rng: val for rng, val in zip(unique_ranges, fetched_values)}
-            for a1_notation in unique_ranges:
-                val_list = fetched_map.get(a1_notation)
-                input_data[a1_notation] = val_list[0][0] if val_list and val_list[0] else None
-        except Exception as e:
-            logger.error(f"Error fetching dashboard input data in batch: {e}"); return
-    for token, list_of_details in dashboard_details_copy.items():
-        current_ltp = latest_tick_data.get(token, {}).get('ltp')
-        if current_ltp is None: continue
-        previous_ltp, ltp_cell_color = previous_ltp_data.get(token), None
-        if previous_ltp is not None and current_ltp != previous_ltp: ltp_cell_color = GREEN_COLOR if current_ltp > previous_ltp else RED_COLOR
-        previous_ltp_data[token] = current_ltp
-        for details in list_of_details:
-            row_num = details['row']
-            symbol_on_sheet_raw = input_data.get(f"{details.get('symbol_col')}{row_num}")
-            symbol_on_sheet = str(symbol_on_sheet_raw).strip().upper() if symbol_on_sheet_raw else ""
-            if not symbol_on_sheet:
-                if details.get('block_type') == "Focus List": start_col, end_col = 'D', 'J'
-                elif details.get('block_type') == "Full Positions": start_col, end_col = 'N', 'AI'
-                else: continue
-                logger.info(f"Detected cleared symbol at row {row_num}. Queuing fast clear for {start_col}{row_num}:{end_col}{row_num}.")
-                requests.append({"repeatCell": {"range": {"sheetId": dashboard_sheet_id, "startRowIndex": row_num - 1, "endRowIndex": row_num, "startColumnIndex": col_to_num(start_col) - 1, "endColumnIndex": col_to_num(end_col)}, "cell": {"userEnteredValue": {}, "userEnteredFormat": {"backgroundColor": rgb_to_float(None)}}, "fields": "userEnteredValue,userEnteredFormat.backgroundColor"}})
-                continue
-            def queue_update(col_letter, value, number_format_pattern=None, bg_color='SENTINEL', is_ltp=False):
-                if not col_letter: return
-                cell_a1 = f"{col_letter}{row_num}"
+        if not smart_ws or not smart_ws._is_connected_flag:
+            logger.warning("WebSocket not connected. Skipping Google Sheet update."); return
+        requests, cells_to_color_this_cycle = [], set()
+        GREEN_COLOR, RED_COLOR, YELLOW_COLOR = (149, 203, 186), (254, 112, 112), (249, 203, 156)
+        dashboard_sheet_id = Dashboard.id
+        if cells_to_clear_color:
+            for cell_a1 in cells_to_clear_color:
+                col_letter, row_num = ''.join(filter(str.isalpha, cell_a1)), int(''.join(filter(str.isdigit, cell_a1)))
                 cell_range = {"sheetId": dashboard_sheet_id, "startRowIndex": row_num - 1, "endRowIndex": row_num, "startColumnIndex": col_to_num(col_letter) - 1, "endColumnIndex": col_to_num(col_letter)}
-                cell_data, fields, user_entered_value = {}, [], {}
-                if isinstance(value, (int, float)): user_entered_value["numberValue"] = value
-                else: user_entered_value["stringValue"] = str(value)
-                cell_data["userEnteredValue"], fields = user_entered_value, fields + ["userEnteredValue"]
-                user_entered_format, format_fields = {}, []
-                if bg_color != 'SENTINEL':
-                    user_entered_format["backgroundColor"], format_fields = rgb_to_float(bg_color), format_fields + ["backgroundColor"]
-                    if is_ltp and bg_color is not None: cells_to_color_this_cycle.add(cell_a1)
-                if number_format_pattern:
-                    user_entered_format["numberFormat"], format_fields = {"type": "NUMBER" if isinstance(value, (int, float)) else "TEXT", "pattern": number_format_pattern}, format_fields + ["numberFormat"]
-                if user_entered_format:
-                    cell_data["userEnteredFormat"] = user_entered_format
-                    for key in format_fields: fields.append(f"userEnteredFormat.{key}")
-                requests.append({"updateCells": {"rows": [{"values": [cell_data]}], "fields": ",".join(fields), "range": cell_range}})
-            queue_update(details.get('ltp_col'), current_ltp, "#,##0.00", bg_color=ltp_cell_color, is_ltp=True)
-            if details.get('chg_col') and token in latest_quote_data:
-                percentage_change = latest_quote_data[token].get('percentChange', 0.0)
-                percentage_change_decimal = percentage_change / 100.0 if percentage_change is not None else 0.0
-                chg_cell_color = GREEN_COLOR if percentage_change > 0 else RED_COLOR if percentage_change < 0 else None
-                queue_update(details['chg_col'], percentage_change_decimal, "0.00%", bg_color=chg_cell_color)
-            if details.get('block_type') == "Full Positions":
-                try:
-                    price_val_str, qty_val_str = str(input_data.get(f'{details["price_col"]}{row_num}') or '0').replace(',',''), str(input_data.get(f'{details["qty_col"]}{row_num}') or '0').replace(',','')
-                    entry_date_str = input_data.get(f'{details["entry_date_col"]}{row_num}')
-                    price_val, qty_val = float(price_val_str) if price_val_str else 0, float(qty_val_str) if qty_val_str else 0
-                except (ValueError, TypeError) as e:
-                    logger.warning(f"Could not parse numeric values for row {row_num}. Error: {e}"); continue
-                if price_val and qty_val:
-                    return_amt = (current_ltp - price_val) * qty_val
-                    return_pct = (current_ltp - price_val) / price_val if price_val != 0 else 0
-                    queue_update(details.get('return_amt_col'), return_amt, "#,##0.00", bg_color=(GREEN_COLOR if return_amt > 0 else RED_COLOR if return_amt < 0 else None))
-                    queue_update(details.get('return_pct_col'), return_pct, "0.00%", bg_color=(GREEN_COLOR if return_pct > 0 else RED_COLOR if return_pct < 0 else None))
-                swing_low_str = str(input_data.get(f'{details.get("swing_low_input_col")}{row_num}') or '').replace(',','')
-                swing_low_val = None
-                try:
-                    if swing_low_str: swing_low_val = float(swing_low_str)
-                except (ValueError, TypeError): queue_update(details.get('percent_from_swing_low_col'), "Invalid Low", "@", bg_color=None)
-                if swing_low_val is not None and swing_low_val > 0:
-                    monthly_high = monthly_high_cache_copy.get(token)
-                    if monthly_high and monthly_high > 0:
-                        percent_from_high = (monthly_high - swing_low_val) / swing_low_val
-                        cell_color = YELLOW_COLOR if percent_from_high >= 0.35 else None
-                        queue_update(details.get('percent_from_swing_low_col'), percent_from_high, "0.00%", bg_color=cell_color)
-                    else: queue_update(details.get('percent_from_swing_low_col'), "No High", "@", bg_color=None)
-                else: queue_update(details.get('percent_from_swing_low_col'), "", "General", bg_color=None)
-                month_val_str = str(input_data.get(f'{MONTH_SORT_COL}{row_num}') or '')
-                try:
-                    month_val = int(month_val_str)
-                    cell_color = YELLOW_COLOR if month_val >= 3 else None
-                    queue_update(MONTH_SORT_COL, month_val, "0", bg_color=cell_color)
-                except (ValueError, TypeError): queue_update(MONTH_SORT_COL, month_val_str, "@", bg_color=None)
-                days_duration = ""
-                if entry_date_str:
+                requests.append({"repeatCell": {"range": cell_range, "cell": {"userEnteredFormat": {"backgroundColor": rgb_to_float(None)}}, "fields": "userEnteredFormat.backgroundColor"}})
+        cells_to_clear_color.clear()
+        input_ranges = []
+        for list_of_details in dashboard_details_copy.values():
+            for details in list_of_details:
+                row_num = details['row']
+                if details.get("symbol_col"): input_ranges.append(f'{details["symbol_col"]}{row_num}')
+                if details.get('block_type') == "Full Positions":
+                    if details.get("price_col"): input_ranges.append(f'{details["price_col"]}{row_num}')
+                    if details.get("qty_col"): input_ranges.append(f'{details["qty_col"]}{row_num}')
+                    if details.get("entry_date_col"): input_ranges.append(f'{details["entry_date_col"]}{row_num}')
+                    if details.get("swing_low_input_col"): input_ranges.append(f'{details["swing_low_input_col"]}{row_num}')
+                    input_ranges.append(f'{MONTH_SORT_COL}{row_num}')
+        input_data = {}
+        if input_ranges:
+            try:
+                unique_ranges = list(set(input_ranges))
+                fetched_values = Dashboard.batch_get(unique_ranges)
+                fetched_map = {rng: val for rng, val in zip(unique_ranges, fetched_values)}
+                for a1_notation in unique_ranges:
+                    val_list = fetched_map.get(a1_notation)
+                    input_data[a1_notation] = val_list[0][0] if val_list and val_list[0] else None
+            except Exception as e:
+                logger.error(f"Error fetching dashboard input data in batch: {e}"); return
+        for token, list_of_details in dashboard_details_copy.items():
+            current_ltp = latest_tick_data.get(token, {}).get('ltp')
+            if current_ltp is None: continue
+            previous_ltp, ltp_cell_color = previous_ltp_data.get(token), None
+            if previous_ltp is not None and current_ltp != previous_ltp: ltp_cell_color = GREEN_COLOR if current_ltp > previous_ltp else RED_COLOR
+            previous_ltp_data[token] = current_ltp
+            for details in list_of_details:
+                row_num = details['row']
+                symbol_on_sheet_raw = input_data.get(f"{details.get('symbol_col')}{row_num}")
+                symbol_on_sheet = str(symbol_on_sheet_raw).strip().upper() if symbol_on_sheet_raw else ""
+                if not symbol_on_sheet:
+                    if details.get('block_type') == "Focus List": start_col, end_col = 'D', 'J'
+                    elif details.get('block_type') == "Full Positions": start_col, end_col = 'N', 'AI'
+                    else: continue
+                    logger.info(f"Detected cleared symbol at row {row_num}. Queuing fast clear for {start_col}{row_num}:{end_col}{row_num}.")
+                    requests.append({"repeatCell": {"range": {"sheetId": dashboard_sheet_id, "startRowIndex": row_num - 1, "endRowIndex": row_num, "startColumnIndex": col_to_num(start_col) - 1, "endColumnIndex": col_to_num(end_col)}, "cell": {"userEnteredValue": {}, "userEnteredFormat": {"backgroundColor": rgb_to_float(None)}}, "fields": "userEnteredValue,userEnteredFormat.backgroundColor"}})
+                    continue
+                def queue_update(col_letter, value, number_format_pattern=None, bg_color='SENTINEL', is_ltp=False):
+                    if not col_letter: return
+                    cell_a1 = f"{col_letter}{row_num}"
+                    cell_range = {"sheetId": dashboard_sheet_id, "startRowIndex": row_num - 1, "endRowIndex": row_num, "startColumnIndex": col_to_num(col_letter) - 1, "endColumnIndex": col_to_num(col_letter)}
+                    cell_data, fields, user_entered_value = {}, [], {}
+                    if isinstance(value, (int, float)): user_entered_value["numberValue"] = value
+                    else: user_entered_value["stringValue"] = str(value)
+                    cell_data["userEnteredValue"], fields = user_entered_value, fields + ["userEnteredValue"]
+                    user_entered_format, format_fields = {}, []
+                    if bg_color != 'SENTINEL':
+                        user_entered_format["backgroundColor"], format_fields = rgb_to_float(bg_color), format_fields + ["backgroundColor"]
+                        if is_ltp and bg_color is not None: cells_to_color_this_cycle.add(cell_a1)
+                    if number_format_pattern:
+                        user_entered_format["numberFormat"], format_fields = {"type": "NUMBER" if isinstance(value, (int, float)) else "TEXT", "pattern": number_format_pattern}, format_fields + ["numberFormat"]
+                    if user_entered_format:
+                        cell_data["userEnteredFormat"] = user_entered_format
+                        for key in format_fields: fields.append(f"userEnteredFormat.{key}")
+                    requests.append({"updateCells": {"rows": [{"values": [cell_data]}], "fields": ",".join(fields), "range": cell_range}})
+                queue_update(details.get('ltp_col'), current_ltp, "#,##0.00", bg_color=ltp_cell_color, is_ltp=True)
+                if details.get('chg_col') and token in latest_quote_data:
+                    percentage_change = latest_quote_data[token].get('percentChange', 0.0)
+                    percentage_change_decimal = percentage_change / 100.0 if percentage_change is not None else 0.0
+                    chg_cell_color = GREEN_COLOR if percentage_change > 0 else RED_COLOR if percentage_change < 0 else None
+                    queue_update(details['chg_col'], percentage_change_decimal, "0.00%", bg_color=chg_cell_color)
+                if details.get('block_type') == "Full Positions":
                     try:
-                        entry_dt = datetime.datetime.strptime(entry_date_str, '%d-%b-%y')
-                        days_duration = f"{(get_ist_time().date() - entry_dt.date()).days} Days"
-                    except ValueError: days_duration = "Invalid Date"
-                queue_update(details.get('days_duration_col'), days_duration, "@")
-    if requests:
-        try:
-            gsheet.batch_update({'requests': requests})
-            logger.info(f"Executed {len(requests)} batch update operations on Google Sheet for dashboard.")
-        except Exception as e: logger.exception(f"An error occurred during batch update to Google Sheet: {e}")
+                        price_val_str, qty_val_str = str(input_data.get(f'{details["price_col"]}{row_num}') or '0').replace(',',''), str(input_data.get(f'{details["qty_col"]}{row_num}') or '0').replace(',','')
+                        entry_date_str = input_data.get(f'{details["entry_date_col"]}{row_num}')
+                        price_val, qty_val = float(price_val_str) if price_val_str else 0, float(qty_val_str) if qty_val_str else 0
+                    except (ValueError, TypeError) as e:
+                        logger.warning(f"Could not parse numeric values for row {row_num}. Error: {e}"); continue
+                    if price_val and qty_val:
+                        return_amt = (current_ltp - price_val) * qty_val
+                        return_pct = (current_ltp - price_val) / price_val if price_val != 0 else 0
+                        queue_update(details.get('return_amt_col'), return_amt, "#,##0.00", bg_color=(GREEN_COLOR if return_amt > 0 else RED_COLOR if return_amt < 0 else None))
+                        queue_update(details.get('return_pct_col'), return_pct, "0.00%", bg_color=(GREEN_COLOR if return_pct > 0 else RED_COLOR if return_pct < 0 else None))
+                    swing_low_str = str(input_data.get(f'{details.get("swing_low_input_col")}{row_num}') or '').replace(',','')
+                    swing_low_val = None
+                    try:
+                        if swing_low_str: swing_low_val = float(swing_low_str)
+                    except (ValueError, TypeError): queue_update(details.get('percent_from_swing_low_col'), "Invalid Low", "@", bg_color=None)
+                    if swing_low_val is not None and swing_low_val > 0:
+                        monthly_high = monthly_high_cache_copy.get(token)
+                        if monthly_high and monthly_high > 0:
+                            percent_from_high = (monthly_high - swing_low_val) / swing_low_val
+                            cell_color = YELLOW_COLOR if percent_from_high >= 0.35 else None
+                            queue_update(details.get('percent_from_swing_low_col'), percent_from_high, "0.00%", bg_color=cell_color)
+                        else: queue_update(details.get('percent_from_swing_low_col'), "No High", "@", bg_color=None)
+                    else: queue_update(details.get('percent_from_swing_low_col'), "", "General", bg_color=None)
+                    month_val_str = str(input_data.get(f'{MONTH_SORT_COL}{row_num}') or '')
+                    try:
+                        month_val = int(month_val_str)
+                        cell_color = YELLOW_COLOR if month_val >= 3 else None
+                        queue_update(MONTH_SORT_COL, month_val, "0", bg_color=cell_color)
+                    except (ValueError, TypeError): queue_update(MONTH_SORT_COL, month_val_str, "@", bg_color=None)
+                    days_duration = ""
+                    if entry_date_str:
+                        try:
+                            entry_dt = datetime.datetime.strptime(entry_date_str, '%d-%b-%y')
+                            days_duration = f"{(get_ist_time().date() - entry_dt.date()).days} Days"
+                        except ValueError: days_duration = "Invalid Date"
+                    queue_update(details.get('days_duration_col'), days_duration, "@")
+        if requests:
+            try:
+                gsheet.batch_update({'requests': requests})
+                logger.info(f"Executed {len(requests)} batch update operations on Google Sheet for dashboard.")
+            except Exception as e: logger.exception(f"An error occurred during batch update to Google Sheet: {e}")
 
 # --- Main Application Logic & Threads ---
 auth_token, feed_token, websocket_thread, last_login_date = None, None, None, None
@@ -1215,32 +1216,37 @@ def run_initial_setup_data_fetch(initial_data_ready_event): # Background thread 
     finally: initial_data_ready_event.set()
 def sort_full_positions(): # Reads, sorts, and writes back the Full Positions section based on Columns W and Y.
     logger.info("Performing automatic sort of Full Positions...")
-    try:
-        last_row = get_last_row_in_column(Dashboard, FULL_SYMBOL_COL)
-        if last_row < START_ROW_DATA:
-            logger.info("No data in Full Positions to sort."); return
-        range_to_sort, token_range = f"{FULL_EXCHANGE_COL}{START_ROW_DATA}:{FULL_POSITIONS_END_COL}{last_row}", f"{ATH_CACHE_Z_COL_DASH}{START_ROW_DATA}:{ATH_CACHE_Z_COL_DASH}{last_row}"
-        dashboard_data, token_data = Dashboard.get(range_to_sort), ATHCache.get(token_range)
-        combined_data = []
-        month_col_index, swing_low_col_index = col_to_num(MONTH_SORT_COL) - col_to_num(FULL_EXCHANGE_COL), col_to_num(PERCENT_FROM_SWING_LOW_COL) - col_to_num(FULL_EXCHANGE_COL)
-        for i, row_data in enumerate(dashboard_data):
-            def to_float(value, is_percent=False):
-                try:
-                    if is_percent: return float(str(value).strip().replace('%', ''))
-                    return float(value)
-                except (ValueError, TypeError): return -float('inf')
-            month_val = to_float(row_data[month_col_index]) if len(row_data) > month_col_index else -float('inf')
-            swing_low_pct_val = to_float(row_data[swing_low_col_index], is_percent=True) if len(row_data) > swing_low_col_index else -float('inf')
-            combined_data.append({'dashboard_row': row_data, 'token_row': token_data[i] if i < len(token_data) else [''], 'sort_month': month_val, 'sort_swing_low': swing_low_pct_val, 'original_index': i})
-        sorted_combined_data = sorted(combined_data, key=lambda x: (x['sort_month'], x['sort_swing_low']), reverse=True)
-        if all(item['original_index'] == i for i, item in enumerate(sorted_combined_data)):
-            logger.info("No change in sort order. Skipping sheet update."); return
-        logger.info("Change in sort order detected. Updating Google Sheet.")
-        sorted_dashboard_data, sorted_token_data = [item['dashboard_row'] for item in sorted_combined_data], [item['token_row'] for item in sorted_combined_data]
-        Dashboard.update(range_to_sort, sorted_dashboard_data, value_input_option='USER_ENTERED')
-        ATHCache.update(token_range, sorted_token_data, value_input_option='USER_ENTERED')
-        logger.info("Successfully sorted and updated Full Positions on the Google Sheet.")
-    except Exception as e: logger.exception(f"An error occurred during the automatic sorting process: {e}")
+    # --- MODIFICATION START ---
+    with data_lock:
+    # --- MODIFICATION END ---
+        try:
+            last_row = get_last_row_in_column(Dashboard, FULL_SYMBOL_COL)
+            if last_row < START_ROW_DATA:
+                logger.info("No data in Full Positions to sort."); return
+            range_to_sort, token_range = f"{FULL_EXCHANGE_COL}{START_ROW_DATA}:{FULL_POSITIONS_END_COL}{last_row}", f"{ATH_CACHE_Z_COL_DASH}{START_ROW_DATA}:{ATH_CACHE_Z_COL_DASH}{last_row}"
+            dashboard_data, token_data = Dashboard.get(range_to_sort), ATHCache.get(token_range)
+            combined_data = []
+            month_col_index, swing_low_col_index = col_to_num(MONTH_SORT_COL) - col_to_num(FULL_EXCHANGE_COL), col_to_num(PERCENT_FROM_SWING_LOW_COL) - col_to_num(FULL_EXCHANGE_COL)
+            for i, row_data in enumerate(dashboard_data):
+                def to_float(value, is_percent=False):
+                    try:
+                        if is_percent: return float(str(value).strip().replace('%', ''))
+                        return float(value)
+                    except (ValueError, TypeError): return -float('inf')
+                month_val = to_float(row_data[month_col_index]) if len(row_data) > month_col_index else -float('inf')
+                swing_low_pct_val = to_float(row_data[swing_low_col_index], is_percent=True) if len(row_data) > swing_low_col_index else -float('inf')
+                combined_data.append({'dashboard_row': row_data, 'token_row': token_data[i] if i < len(token_data) else [''], 'sort_month': month_val, 'sort_swing_low': swing_low_pct_val, 'original_index': i})
+            sorted_combined_data = sorted(combined_data, key=lambda x: (x['sort_month'], x['sort_swing_low']), reverse=True)
+            if all(item['original_index'] == i for i, item in enumerate(sorted_combined_data)):
+                logger.info("No change in sort order. Skipping sheet update."); return
+            logger.info("Change in sort order detected. Updating Google Sheet.")
+            sorted_dashboard_data, sorted_token_data = [item['dashboard_row'] for item in sorted_combined_data], [item['token_row'] for item in sorted_combined_data]
+            # --- MODIFICATION START ---
+            Dashboard.update(values=sorted_dashboard_data, range_name=range_to_sort, value_input_option='USER_ENTERED')
+            ATHCache.update(values=sorted_token_data, range_name=token_range, value_input_option='USER_ENTERED')
+            # --- MODIFICATION END ---
+            logger.info("Successfully sorted and updated Full Positions on the Google Sheet.")
+        except Exception as e: logger.exception(f"An error occurred during the automatic sorting process: {e}")
 def run_background_task_scheduler(initial_data_ready_event): # Main scheduler for slower tasks like sheet scanning and trade setup checks.
     global subscribed_tokens, excel_dashboard_details, excel_orh_setup_details, excel_3pct_setup_details, previous_j_column_state, previous_ah_column_state, previous_breakdown_state
     logger.info("Background task scheduler thread started.")
@@ -1490,3 +1496,4 @@ def run_threaded_logic(): # Starts the main application logic in a separate thre
 if __name__ == "__main__": # Main entry point for Flask + Threaded Logic.
     run_threaded_logic()
     app.run(host="0.0.0.0", port=int(os.environ.get("PORT", 8080)))
+
