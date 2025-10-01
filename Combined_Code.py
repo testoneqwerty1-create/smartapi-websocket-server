@@ -649,7 +649,7 @@ def check_and_update_all_breakdown_statuses(): # MODIFIED: Finds the *exact* 15-
         support_details_copy = support_candle_details.copy()
     if not setup_details_copy: return
     try:
-        cols_to_read = [TRAILING_STOP_INPUT_COL, TRAILING_STOP_STATUS_COL, HIGHEST_UP_CANDLE_STATUS_COL, HIGH_VOL_STATUS_COL, PCT_DOWN_STATUS_COL]
+        cols_to_read = [TRAILING_STOP_INPUT_COL, HIGHEST_UP_CANDLE_STATUS_COL, HIGH_VOL_STATUS_COL, PCT_DOWN_STATUS_COL]
         start_col, end_col = min(cols_to_read, key=col_to_num), max(cols_to_read, key=col_to_num)
         last_row = max((e['row'] for token, entries in setup_details_copy.items() for e in entries if entries), default=0)
         if last_row < START_ROW_DATA: return
@@ -668,24 +668,22 @@ def check_and_update_all_breakdown_statuses(): # MODIFIED: Finds the *exact* 15-
             row, row_idx = entry["row"], entry["row"] - START_ROW_DATA
             setups = [{'name': 'Trailing Stop', 'input_col': TRAILING_STOP_INPUT_COL, 'status_col': TRAILING_STOP_STATUS_COL}, {'name': 'Highest Up Candle', 'status_col': HIGHEST_UP_CANDLE_STATUS_COL}, {'name': 'High Volume', 'status_col': HIGH_VOL_STATUS_COL}, {'name': '3% Down', 'status_col': PCT_DOWN_STATUS_COL}]
             for setup in setups:
-                current_status = get_sheet_value(row_idx, setup['status_col'])
                 first_breakdown_candle, new_status = None, ""
+                
+                # --- FIX STARTS HERE ---
+                # The logic has been restructured to remove the 'continue' statements that were
+                # preventing empty cells from having their color cleared.
                 if 'input_col' in setup: # Logic for manual Trailing Stop
                     trigger_price_str = get_sheet_value(row_idx, setup['input_col'])
                     try: trigger_price = float(str(trigger_price_str).replace(',', '')) if trigger_price_str else None
                     except (ValueError, TypeError): trigger_price = None
-                    if trigger_price is None:
-                        if current_status.strip() != "": new_status = ""
-                        else: continue
-                    else:
+                    if trigger_price is not None:
                         breakdown_candidates = [c for c in history_15min if c['close'] < trigger_price]
                         if breakdown_candidates: first_breakdown_candle = min(breakdown_candidates, key=lambda c: c['start_time'])
+                
                 else: # Logic for automated setups
                     support_levels = support_details_copy.get((row, setup['name']), [])
-                    if not support_levels:
-                        if current_status.strip() != "": new_status = ""
-                        else: continue
-                    else:
+                    if support_levels:
                         for level in support_levels:
                             support_price, support_time = level['price'], level['time']
                             breakdown_candidates = [c for c in history_15min if c['start_time'] > support_time and c['close'] < support_price]
@@ -693,15 +691,13 @@ def check_and_update_all_breakdown_statuses(): # MODIFIED: Finds the *exact* 15-
                                 earliest_breakdown = min(breakdown_candidates, key=lambda c: c['start_time'])
                                 if first_breakdown_candle is None or earliest_breakdown['start_time'] < first_breakdown_candle['start_time']:
                                     first_breakdown_candle = earliest_breakdown
+                
                 if first_breakdown_candle:
                     candle_close_time = first_breakdown_candle['start_time'] + timedelta(minutes=15)
                     new_status = f"Yes ({candle_close_time.strftime('%d %b, %I:%M %p')})"
-                else: new_status = ""
-                
-                # --- FIX STARTS HERE ---
-                # The conditional check 'if new_status != current_status:' has been removed.
-                # This block now runs on every check to forcefully ensure both the cell value and the
-                # background color are always correct, fixing any visual inconsistencies.
+
+                # The final update block. new_status will be "" if no breakdown was found,
+                # which correctly clears the cell text and color.
                 cell_range = {"sheetId": dashboard_sheet_id, "startRowIndex": row - 1, "endRowIndex": row, "startColumnIndex": col_to_num(setup['status_col']) - 1, "endColumnIndex": col_to_num(setup['status_col'])}
                 bg_color = RED_COLOR if new_status.startswith("Yes") else None
                 cell_data = {"userEnteredValue": {"stringValue": new_status}, "userEnteredFormat": {"backgroundColor": rgb_to_float(bg_color)}}
@@ -1491,3 +1487,4 @@ def run_threaded_logic(): # Starts the main application logic in a separate thre
 if __name__ == "__main__": # Main entry point for Flask + Threaded Logic.
     run_threaded_logic()
     app.run(host="0.0.0.0", port=int(os.environ.get("PORT", 8080)))
+
