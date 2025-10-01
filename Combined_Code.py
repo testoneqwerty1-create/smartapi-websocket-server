@@ -743,7 +743,10 @@ def check_and_update_breakdown_status(): # Checks for a change in breakdown stat
                 previous_status = str(previous_breakdown_state.get(cell_key, ""))
                 is_breakdown_now = "yes" in current_status.lower()
                 was_breakdown_before = "yes" in previous_status.lower()
-                if is_breakdown_now and not was_breakdown_before:
+                # --- MODIFICATION START ---
+                # Added 'and is_alert_hours()' to ensure alerts are only triggered during market hours.
+                if is_breakdown_now and not was_breakdown_before and is_alert_hours():
+                # --- MODIFICATION END ---
                     logger.info(f"!!! NEW BREAKDOWN DETECTED for {entry['symbol']} on row {row} in column {status_col_letter} !!!")
                     breakdown_detected_this_cycle = True
                 previous_breakdown_state[cell_key] = current_status
@@ -1487,4 +1490,3 @@ def run_threaded_logic(): # Starts the main application logic in a separate thre
 if __name__ == "__main__": # Main entry point for Flask + Threaded Logic.
     run_threaded_logic()
     app.run(host="0.0.0.0", port=int(os.environ.get("PORT", 8080)))
-
