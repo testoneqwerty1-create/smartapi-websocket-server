@@ -4,7 +4,7 @@ from datetime import timedelta
 from dateutil.relativedelta import relativedelta
 from zoneinfo import ZoneInfo
 from flask import Flask
-import gspread, pyotp, websocket, requests, yfinance as yf, logzero
+import gspread, pyotp, websocket, requests, yfinance as yf, logzero, pandas as pd
 from logzero import logger
 from oauth2client.service_account import ServiceAccountCredentials
 try:
@@ -985,7 +985,6 @@ def update_excel_live_data(): # Updates the Google Sheet with live data and Swin
                 if details.get("qty_col"): input_ranges.append(f'{details["qty_col"]}{row_num}')
                 if details.get("entry_date_col"): input_ranges.append(f'{details["entry_date_col"]}{row_num}')
                 if details.get("swing_low_input_col"): input_ranges.append(f'{details["swing_low_input_col"]}{row_num}')
-                input_ranges.append(f'{MONTH_SORT_COL}{row_num}')
     input_data = {}
     if input_ranges:
         try:
@@ -1063,12 +1062,6 @@ def update_excel_live_data(): # Updates the Google Sheet with live data and Swin
                         queue_update(details.get('percent_from_swing_low_col'), percent_from_high, "0.00%", bg_color=cell_color)
                     else: queue_update(details.get('percent_from_swing_low_col'), "No High", "@", bg_color=None)
                 else: queue_update(details.get('percent_from_swing_low_col'), "", "General", bg_color=None)
-                month_val_str = str(input_data.get(f'{MONTH_SORT_COL}{row_num}') or '')
-                try:
-                    month_val = int(month_val_str)
-                    cell_color = YELLOW_COLOR if month_val >= 3 else None
-                    queue_update(MONTH_SORT_COL, month_val, "0", bg_color=cell_color)
-                except (ValueError, TypeError): queue_update(MONTH_SORT_COL, month_val_str, "@", bg_color=None)
                 days_duration = ""
                 if entry_date_str:
                     try:
@@ -1081,6 +1074,125 @@ def update_excel_live_data(): # Updates the Google Sheet with live data and Swin
             gsheet.batch_update({'requests': requests})
             logger.info(f"Executed {len(requests)} batch update operations on Google Sheet for dashboard.")
         except Exception as e: logger.exception(f"An error occurred during batch update to Google Sheet: {e}")
+
+# --- START: New V-Column Analysis and Sorting Logic ---
+def _find_last_hh_after_ll(df):
+    """Scans a dataframe of candles backwards to find the last HH after an LL."""
+    if len(df) < 3:
+        return None
+    # Ensure dataframe is sorted by date ascending
+    df = df.sort_index(ascending=True)
+    # Use shifted data to compare with previous candles
+    df['prev_high'] = df['high'].shift(1)
+    df['prev_low'] = df['low'].shift(1)
+    df['prev_prev_low'] = df['low'].shift(2)
+
+    # Conditions for the pattern
+    # is_hh: current high is greater than previous high
+    is_hh = df['high'] > df['prev_high']
+    # is_prev_ll: previous low is less than the low before it
+    is_prev_ll = df['prev_low'] < df['prev_prev_low']
+
+    # Find where both conditions are true
+    signal_candles = df[is_hh & is_prev_ll]
+
+    if not signal_candles.empty:
+        # Return the date of the last signal
+        return signal_candles.index[-1].to_pydatetime().date()
+    return None
+
+def _format_time_since_signal(signal_date, today_date):
+    """Formats the time since the signal date into the required string."""
+    if not signal_date:
+        return "N/A"
+    delta = relativedelta(today_date, signal_date)
+    
+    # Custom day calculation: remaining days after months and weeks are accounted for
+    remaining_days = (today_date - (signal_date + relativedelta(months=delta.months, weeks=delta.weeks))).days
+    
+    return f"{delta.months}Month, {delta.weeks}Weeks, {remaining_days}th day"
+
+def analyze_and_update_v_column():
+    """Fetches history, finds HH-after-LL signals, and updates Column V."""
+    logger.info("Starting 24-hour analysis for V-Column (HH after LL)...")
+    updates_queued = []
+    
+    with data_lock:
+        # Get a copy of the details for stocks in "Full Positions"
+        full_positions_details = {
+            token: [d for d in details if d.get('block_type') == 'Full Positions']
+            for token, details in excel_dashboard_details.items()
+        }
+
+    today = get_ist_time().date()
+    # Fetch data for the last ~1.5 years to ensure enough candles
+    from_date = (today - relativedelta(years=1, months=6)).strftime("%Y-%m-%d %H:%M")
+    to_date = today.strftime("%Y-%m-%d %H:%M")
+
+    for token, details_list in full_positions_details.items():
+        if not details_list:
+            continue
+        
+        # All entries for a token share the same symbol/exchange
+        details = details_list[0]
+        symbol = details['symbol']
+        exchange = details.get('exchange', 'NSE').upper()
+
+        try:
+            # 1. Fetch Daily Historical Data using Angel One API
+            historic_param = {"exchange": exchange, "symboltoken": token, "interval": "ONE_DAY", "fromdate": from_date, "todate": to_date}
+            response = smart_api_obj.getCandleData(historic_param)
+            
+            if not (response and response.get("status") and response.get("data")):
+                logger.warning(f"Could not fetch daily history for {symbol} (Token: {token}). Skipping V-Column analysis.")
+                continue
+
+            # 2. Create Pandas DataFrame
+            data = response["data"]
+            if not data:
+                logger.warning(f"No daily history data returned for {symbol} (Token: {token}).")
+                continue
+
+            df_daily = pd.DataFrame(data, columns=['timestamp', 'open', 'high', 'low', 'close', 'volume'])
+            df_daily['timestamp'] = pd.to_datetime(df_daily['timestamp'])
+            df_daily.set_index('timestamp', inplace=True)
+            
+            # 3. Create Weekly and Monthly Candles
+            agg_funcs = {'open': 'first', 'high': 'max', 'low': 'min', 'close': 'last', 'volume': 'sum'}
+            df_weekly = df_daily.resample('W-FRI').agg(agg_funcs).dropna()
+            df_monthly = df_daily.resample('M').agg(agg_funcs).dropna()
+
+            # 4. Find signals on all timeframes
+            daily_signal_date = _find_last_hh_after_ll(df_daily.copy())
+            weekly_signal_date = _find_last_hh_after_ll(df_weekly.copy())
+            monthly_signal_date = _find_last_hh_after_ll(df_monthly.copy())
+
+            # 5. Format the output string for each timeframe
+            day_str = _format_time_since_signal(daily_signal_date, today)
+            week_str = _format_time_since_signal(weekly_signal_date, today)
+            month_str = _format_time_since_signal(monthly_signal_date, today)
+            
+            final_output = f"{month_str}, {week_str}, {day_str}"
+            
+            # Queue the update for all rows this token appears on in Full Positions
+            for d in details_list:
+                updates_queued.append({'range': f"{MONTH_SORT_COL}{d['row']}", 'values': [[final_output]]})
+            
+            logger.info(f"V-Column analysis for {symbol}: {final_output}")
+
+        except Exception as e:
+            logger.exception(f"Error during V-Column analysis for {symbol}: {e}")
+        time.sleep(0.5) # Rate limiting
+
+    if updates_queued:
+        try:
+            Dashboard.batch_update(updates_queued, value_input_option='USER_ENTERED')
+            logger.info(f"Applied {len(updates_queued)} updates to V-Column.")
+        except Exception as e:
+            logger.error(f"Failed to batch update V-Column on Google Sheet: {e}")
+    else:
+        logger.info("No V-Column updates were generated.")
+# --- END: New V-Column Analysis and Sorting Logic ---
 
 # --- Main Application Logic & Threads ---
 auth_token, feed_token, websocket_thread, last_login_date = None, None, None, None
@@ -1207,41 +1319,71 @@ def run_initial_setup_data_fetch(initial_data_ready_event): # Background thread 
         logger.info("Initial data fetch is complete. Handing over to the scheduler for timed checks.")
     except Exception as e: logger.exception(f"An error occurred during initial data fetch: {e}")
     finally: initial_data_ready_event.set()
-def sort_full_positions(): # Reads, sorts, and writes back the Full Positions section based on Columns W and Y.
-    logger.info("Performing automatic sort of Full Positions...")
+def sort_full_positions(): # REWRITTEN: Reads, sorts, and writes back Full Positions based on the new V-Column text.
+    """Reads, sorts (ascending by month count), and writes back the Full Positions section."""
+    logger.info("Performing automatic sort of Full Positions based on V-Column...")
     try:
         last_row = get_last_row_in_column(Dashboard, FULL_SYMBOL_COL)
         if last_row < START_ROW_DATA:
             logger.info("No data in Full Positions to sort."); return
-        range_to_sort, token_range = f"{FULL_EXCHANGE_COL}{START_ROW_DATA}:{FULL_POSITIONS_END_COL}{last_row}", f"{ATH_CACHE_Z_COL_DASH}{START_ROW_DATA}:{ATH_CACHE_Z_COL_DASH}{last_row}"
-        dashboard_data, token_data = Dashboard.get(range_to_sort), ATHCache.get(token_range)
+
+        # Define the full range to read and write
+        range_to_sort = f"{FULL_EXCHANGE_COL}{START_ROW_DATA}:{FULL_POSITIONS_END_COL}{last_row}"
+        token_range = f"{ATH_CACHE_Z_COL_DASH}{START_ROW_DATA}:{ATH_CACHE_Z_COL_DASH}{last_row}"
+
+        # Fetch all data at once
+        dashboard_data = Dashboard.get(range_to_sort)
+        token_data = ATHCache.get(token_range)
+
         combined_data = []
-        month_col_index, swing_low_col_index = col_to_num(MONTH_SORT_COL) - col_to_num(FULL_EXCHANGE_COL), col_to_num(PERCENT_FROM_SWING_LOW_COL) - col_to_num(FULL_EXCHANGE_COL)
+        month_col_index = col_to_num(MONTH_SORT_COL) - col_to_num(FULL_EXCHANGE_COL)
+
         for i, row_data in enumerate(dashboard_data):
-            def to_float(value, is_percent=False):
+            month_count = float('inf') # Default to a large number if parsing fails
+            if len(row_data) > month_col_index:
+                v_col_value = str(row_data[month_col_index])
                 try:
-                    if is_percent: return float(str(value).strip().replace('%', ''))
-                    return float(value)
-                except (ValueError, TypeError): return -float('inf')
-            month_val = to_float(row_data[month_col_index]) if len(row_data) > month_col_index else -float('inf')
-            swing_low_pct_val = to_float(row_data[swing_low_col_index], is_percent=True) if len(row_data) > swing_low_col_index else -float('inf')
-            combined_data.append({'dashboard_row': row_data, 'token_row': token_data[i] if i < len(token_data) else [''], 'sort_month': month_val, 'sort_swing_low': swing_low_pct_val, 'original_index': i})
-        sorted_combined_data = sorted(combined_data, key=lambda x: (x['sort_month'], x['sort_swing_low']), reverse=True)
+                    # Example format: "1Month, 2Weeks, 5th day"
+                    # Extract the month part, find the number
+                    month_part = v_col_value.split(',')[0]
+                    month_count = int(re.search(r'\d+', month_part).group())
+                except (ValueError, TypeError, AttributeError):
+                    logger.warning(f"Could not parse month count from '{v_col_value}' on row {START_ROW_DATA + i}. Will sort to bottom.")
+            
+            combined_data.append({
+                'dashboard_row': row_data,
+                'token_row': token_data[i] if i < len(token_data) else [''],
+                'sort_month': month_count,
+                'original_index': i
+            })
+
+        # Sort in ASCENDING order by month count
+        sorted_combined_data = sorted(combined_data, key=lambda x: x['sort_month'])
+
+        # Check if the order has actually changed to avoid unnecessary writes
         if all(item['original_index'] == i for i, item in enumerate(sorted_combined_data)):
             logger.info("No change in sort order. Skipping sheet update."); return
+
         logger.info("Change in sort order detected. Updating Google Sheet.")
-        sorted_dashboard_data, sorted_token_data = [item['dashboard_row'] for item in sorted_combined_data], [item['token_row'] for item in sorted_combined_data]
+        
+        # Prepare the data for writing back to the sheet
+        sorted_dashboard_data = [item['dashboard_row'] for item in sorted_combined_data]
+        sorted_token_data = [item['token_row'] for item in sorted_combined_data]
+
+        # Batch update both sheets
         Dashboard.update(range_to_sort, sorted_dashboard_data, value_input_option='USER_ENTERED')
         ATHCache.update(token_range, sorted_token_data, value_input_option='USER_ENTERED')
+        
         logger.info("Successfully sorted and updated Full Positions on the Google Sheet.")
-    except Exception as e: logger.exception(f"An error occurred during the automatic sorting process: {e}")
+    except Exception as e:
+        logger.exception(f"An error occurred during the automatic sorting process: {e}")
 def run_background_task_scheduler(initial_data_ready_event): # Main scheduler for slower tasks like sheet scanning and trade setup checks.
     global subscribed_tokens, excel_dashboard_details, excel_orh_setup_details, excel_3pct_setup_details, previous_j_column_state, previous_ah_column_state, previous_breakdown_state
     logger.info("Background task scheduler thread started.")
     logger.info("Scheduler is waiting for initial data fetch to complete...")
     initial_data_ready_event.wait()
     logger.info("Initial data is ready. Scheduler is now running.")
-    last_checked_minute_15min, last_checked_minute_30min, last_checked_minute_1hr, last_scan_time, last_sort_time, last_monthly_high_fetch_time = None, None, None, 0, 0, 0
+    last_checked_minute_15min, last_checked_minute_30min, last_checked_minute_1hr, last_scan_time, last_monthly_high_fetch_time, last_v_column_analysis_and_sort_time = None, None, None, 0, 0, 0
     try:
         j_values = Dashboard.get(f"{SETUP_LOG_COL}{START_ROW_DATA}:{SETUP_LOG_COL}{SETUP_MAX_ROW}")
         for i, cell in enumerate(j_values): previous_j_column_state[START_ROW_DATA + i] = cell[0] if cell else ""
@@ -1317,14 +1459,17 @@ def run_background_task_scheduler(initial_data_ready_event): # Main scheduler fo
                         subscribed_tokens.update(tokens)
                         logger.info(f"Subscribed to {len(tokens)} new tokens on exchange type {ex_type}.")
                 last_scan_time = time.time()
+            if time.time() - last_v_column_analysis_and_sort_time > 86400:
+                logger.info("Triggering daily V-Column analysis and portfolio sort.")
+                analyze_and_update_v_column()
+                time.sleep(5)  # Allow a moment for sheet to update before reading for sort
+                sort_full_positions()
+                last_v_column_analysis_and_sort_time = time.time()
             if time.time() - last_monthly_high_fetch_time > 86400:
                 logger.info("Performing daily fetch for monthly highs (for Swing Low setup)...")
                 with data_lock: unique_tokens_3pct = list(set([(token, details[0]['exchange_type']) for token, details in excel_3pct_setup_details.items() if details]))
                 if unique_tokens_3pct: fetch_monthly_highs(smart_api_obj, unique_tokens_3pct)
                 last_monthly_high_fetch_time = time.time()
-            if time.time() - last_sort_time > 86400:
-                sort_full_positions()
-                last_sort_time = time.time()
             with data_lock: has_3pct_symbols, has_orh_symbols = bool(excel_3pct_setup_details), bool(excel_orh_setup_details)
             if has_3pct_symbols or has_orh_symbols:
                 with data_lock:
@@ -1441,10 +1586,16 @@ def start_main_application(): # Primary function to initialize connections and r
     logger.info("Performing initial symbol scan...")
     new_dashboard, new_orh, new_3pct, all_tokens_for_subscription = scan_sheet_for_all_symbols(Dashboard, ATHCache)
     excel_dashboard_details, excel_orh_setup_details, excel_3pct_setup_details = new_dashboard, new_orh, new_3pct
-    logger.info("Performing initial one-time fetch for monthly highs and portfolio sort...")
+    logger.info("Performing initial one-time fetch for monthly highs...")
     unique_tokens_3pct_startup = list(set([(token, details[0]['exchange_type']) for token, details in excel_3pct_setup_details.items() if details]))
     if unique_tokens_3pct_startup: fetch_monthly_highs(smart_api_obj, unique_tokens_3pct_startup)
+    
+    # Perform initial V-Column analysis and sort on startup
+    logger.info("Performing initial, one-time V-Column analysis and portfolio sort...")
+    analyze_and_update_v_column()
+    time.sleep(5)
     sort_full_positions()
+
     try:
         logger.info("Initializing SmartAPI WebSocket...")
         smart_ws = MyWebSocketClient(auth_token, API_KEY, CLIENT_CODE, feed_token)
@@ -1484,4 +1635,3 @@ def run_threaded_logic(): # Starts the main application logic in a separate thre
 if __name__ == "__main__": # Main entry point for Flask + Threaded Logic.
     run_threaded_logic()
     app.run(host="0.0.0.0", port=int(os.environ.get("PORT", 8080)))
-
