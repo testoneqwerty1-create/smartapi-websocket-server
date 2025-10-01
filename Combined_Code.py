@@ -67,7 +67,6 @@ interval_ohlc_data = collections.defaultdict(lambda: collections.defaultdict(dic
 completed_5min_candles = collections.defaultdict(list)
 volume_history_3pct = collections.defaultdict(lambda: collections.defaultdict(list))
 support_candle_details = {} # NEW: Cache for storing precise support candle date and time.
-hh_ll_indicator_cache = {} # NEW: Cache for the automated HH-LL indicator string for Column V.
 previous_day_high_cache = {}
 monthly_high_cache = {}
 orh_triggered_today = set() # State Tracking: Stores tokens that have already triggered to prevent re-checking
@@ -348,118 +347,6 @@ class MyWebSocketClient(SmartWebSocketV2): # Custom WebSocket client that implem
         candle_info['low'] = min(candle_info.get('low', ltp), ltp)
         candle_info['last_ltp'] = ltp
 
-# --- START: New Automated Indicator Functions for Column V ---
-def fetch_yearly_data(smart_api_obj, token, exchange_str): # Fetches up to 1 year of daily data for the HH-LL indicator.
-    today = get_ist_time()
-    from_dt = today - timedelta(days=365)
-    from_date_str, to_date_str = from_dt.strftime("%Y-%m-%d %H:%M"), today.strftime("%Y-%m-%d %H:%M")
-    try:
-        historic_param = {"exchange": exchange_str, "symboltoken": token, "interval": "ONE_DAY", "fromdate": from_date_str, "todate": to_date_str}
-        response = smart_api_obj.getCandleData(historic_param)
-        if response and response.get("status") and response.get("data"):
-            return [{'start_time': datetime.datetime.fromisoformat(c[0]).replace(tzinfo=ZoneInfo("Asia/Kolkata")), 'open': c[1], 'high': c[2], 'low': c[3], 'close': c[4], 'volume': c[5]} for c in response["data"]]
-        else:
-            logger.warning(f"Could not fetch yearly data for token {token}. Message: {response.get('message', 'Unknown error')}")
-            return None
-    except Exception as e:
-        logger.error(f"Exception fetching yearly data for token {token}: {e}")
-        return None
-def aggregate_candles(daily_candles, timeframe='weekly'): # Aggregates daily candles into weekly or monthly candles.
-    if not daily_candles: return []
-    grouped_candles = collections.defaultdict(list)
-    if timeframe == 'weekly':
-        for candle in daily_candles:
-            year, week, _ = candle['start_time'].isocalendar()
-            grouped_candles[(year, week)].append(candle)
-    elif timeframe == 'monthly':
-        for candle in daily_candles:
-            grouped_candles[(candle['start_time'].year, candle['start_time'].month)].append(candle)
-    aggregated = []
-    for key in sorted(grouped_candles.keys()):
-        days = sorted(grouped_candles[key], key=lambda x: x['start_time'])
-        if not days: continue
-        agg_candle = {
-            'start_time': days[0]['start_time'],
-            'open': days[0]['open'],
-            'high': max(d['high'] for d in days),
-            'low': min(d['low'] for d in days),
-            'close': days[-1]['close'],
-            'volume': sum(d.get('volume', 0) for d in days)
-        }
-        aggregated.append(agg_candle)
-    return aggregated
-def find_hh_after_ll_signal(candles): # Scans candles for the last 'Higher High after Lower Low' signal.
-    if len(candles) < 3: return None
-    # Iterate backwards from the second-to-last completed candle
-    for i in range(len(candles) - 2, 0, -1):
-        # Check for a Higher High (HH)
-        if candles[i]['high'] > candles[i-1]['high']:
-            # If HH is found, now look for a Lower Low (LL) before it
-            for j in range(i - 1, 0, -1):
-                if candles[j]['low'] < candles[j-1]['low']:
-                    # LL found before HH, pattern confirmed. Return the date of the HH.
-                    return candles[i]['start_time']
-    return None
-def run_full_indicator_analysis(): # Orchestrator for the daily HH-LL analysis.
-    global hh_ll_indicator_cache
-    logger.info("--- Starting Daily 'Higher High after Lower Low' Indicator Analysis ---")
-    with data_lock:
-        dashboard_details_copy = excel_dashboard_details.copy()
-    
-    # Create a unique list of stocks from the "Full Positions" section
-    stocks_to_analyze = {}
-    for token, details_list in dashboard_details_copy.items():
-        for details in details_list:
-            if details.get('block_type') == "Full Positions":
-                stocks_to_analyze[token] = details.get("exchange", "NSE").upper()
-                break # Only need one entry per token
-    
-    if not stocks_to_analyze:
-        logger.info("No stocks found in 'Full Positions' to analyze. Skipping.")
-        return
-
-    new_cache = {}
-    today = get_ist_time()
-
-    for token, exchange in stocks_to_analyze.items():
-        logger.info(f"Analyzing token {token} on {exchange} for HH-LL signal...")
-        daily_candles = fetch_yearly_data(smart_api_obj, token, exchange)
-        if not daily_candles or len(daily_candles) < 3:
-            logger.warning(f"Not enough historical data for token {token} to perform analysis.")
-            continue
-        
-        # Aggregate and find signals
-        weekly_candles = aggregate_candles(daily_candles, 'weekly')
-        monthly_candles = aggregate_candles(daily_candles, 'monthly')
-        
-        daily_signal_date = find_hh_after_ll_signal(daily_candles)
-        weekly_signal_date = find_hh_after_ll_signal(weekly_candles)
-        monthly_signal_date = find_hh_after_ll_signal(monthly_candles)
-
-        # Calculate time ago and format the string
-        m_count = "N/A"
-        if monthly_signal_date:
-            delta = relativedelta(today, monthly_signal_date)
-            m_count = delta.months + (delta.years * 12)
-
-        w_count = "N/A"
-        if weekly_signal_date:
-            w_count = (today.date() - weekly_signal_date.date()).days // 7
-            
-        d_count = "N/A"
-        if daily_signal_date:
-            d_count = (today.date() - daily_signal_date.date()).days
-
-        final_string = f"{m_count}Month, {w_count}Weeks, {d_count}th day"
-        new_cache[token] = final_string
-        logger.info(f"Result for token {token}: {final_string}")
-        time.sleep(0.5) # API rate limiting
-
-    with data_lock:
-        hh_ll_indicator_cache = new_cache
-    logger.info("--- Daily 'Higher High after Lower Low' Indicator Analysis Complete ---")
-# --- END: New Automated Indicator Functions for Column V ---
-
 # --- Setup-Specific Functions (ORH & 3% DOWN) ---
 def fetch_initial_candle_data_5min(smart_api_obj, symbols_to_fetch): # Fetches historical 5-min candle data for today to pre-populate candles for ORH setup.
     logger.info("Fetching initial historical 5-min candle data for today (ORH setup)...")
@@ -734,7 +621,7 @@ def check_and_update_price_volume_setups(): # MODIFIED: Checks for setups, forma
         # Get consolidated signals and precise candle objects
         pct_down_str, pct_down_candles = get_consolidated_signals(three_pct_down_candidates)
         high_vol_str, high_vol_candles = get_consolidated_signals(high_vol_candidates)
-        highest_up_str, highest_up_candles = get_consolidated_signals(highest_up_candles)
+        highest_up_str, highest_up_candles = get_consolidated_signals(highest_up_candidates)
 
         for entry in symbol_entries:
             row = entry["row"]
@@ -1020,10 +907,10 @@ def scan_sheet_for_all_symbols(Dashboard, ATHCache): # Unified function to scan 
         last_row_focus, last_row_full = get_last_row_in_column(Dashboard, FOCUS_SYMBOL_COL), get_last_row_in_column(Dashboard, FULL_SYMBOL_COL)
         max_row_dashboard = max(last_row_focus, last_row_full)
         logger.info(f"Scanning Dashboard up to row {max_row_dashboard}...")
-        for row in range(START_ROW_DATA, max_row_dashboard + 1):
+        for row in range(START_ROW_DATA, max_row_dashboard + 20):
             def process_symbol(symbol, exchange, row_num, token_col, block_details):
                 symbol_clean, symbol_col = str(symbol).strip().upper(), block_details.get('symbol_col')
-                if not symbol or not exchange or symbol_clean == 'SYMBOL' or 'price' in str(symbol).lower(): return
+                if not symbol or not exchange or symbol_clean == 'SYMBOL': return
                 cache_key = (row_num, symbol_col)
                 if scan_memory_cache.get(cache_key) != symbol_clean:
                     logger.info(f"New or changed symbol '{symbol_clean}' found at {cache_key}. Fetching new details.")
@@ -1051,7 +938,7 @@ def scan_sheet_for_all_symbols(Dashboard, ATHCache): # Unified function to scan 
             exchange_3pct, symbol_3pct = get_cell_value(all_dashboard_values, row, PCT_EXCHANGE_COL_3PCT), get_cell_value(all_dashboard_values, row, PCT_SYMBOL_COL_3PCT)
             if exchange_3pct and symbol_3pct: process_symbol(symbol_3pct, exchange_3pct, row, PCT_TOKEN_COL_3PCT, {'setup_type': '3PCT', 'symbol_col': PCT_SYMBOL_COL_3PCT})
         max_row_ath_cache_data = len(all_ath_cache_values) if all_ath_cache_values else 0
-        rows_to_check_ath_cache, token_cols_to_check = max(max_row_dashboard + 1, max_row_ath_cache_data + 1), [ATH_CACHE_Y_COL_DASH, ATH_CACHE_Z_COL_DASH]
+        rows_to_check_ath_cache, token_cols_to_check = max(max_row_dashboard + 20, max_row_ath_cache_data + 1), [ATH_CACHE_Y_COL_DASH, ATH_CACHE_Z_COL_DASH]
         for row_idx in range(rows_to_check_ath_cache):
             row_num = row_idx + 1
             for col_letter in token_cols_to_check:
@@ -1077,7 +964,6 @@ def update_excel_live_data(): # Updates the Google Sheet with live data and Swin
     with data_lock:
         dashboard_details_copy = excel_dashboard_details.copy()
         monthly_high_cache_copy = monthly_high_cache.copy()
-        indicator_cache_copy = hh_ll_indicator_cache.copy() # MODIFIED: Copy indicator cache
     if not smart_ws or not smart_ws._is_connected_flag:
         logger.warning("WebSocket not connected. Skipping Google Sheet update."); return
     requests, cells_to_color_this_cycle = [], set()
@@ -1099,6 +985,7 @@ def update_excel_live_data(): # Updates the Google Sheet with live data and Swin
                 if details.get("qty_col"): input_ranges.append(f'{details["qty_col"]}{row_num}')
                 if details.get("entry_date_col"): input_ranges.append(f'{details["entry_date_col"]}{row_num}')
                 if details.get("swing_low_input_col"): input_ranges.append(f'{details["swing_low_input_col"]}{row_num}')
+                input_ranges.append(f'{MONTH_SORT_COL}{row_num}')
     input_data = {}
     if input_ranges:
         try:
@@ -1176,11 +1063,12 @@ def update_excel_live_data(): # Updates the Google Sheet with live data and Swin
                         queue_update(details.get('percent_from_swing_low_col'), percent_from_high, "0.00%", bg_color=cell_color)
                     else: queue_update(details.get('percent_from_swing_low_col'), "No High", "@", bg_color=None)
                 else: queue_update(details.get('percent_from_swing_low_col'), "", "General", bg_color=None)
-                # --- START: MODIFIED logic for Column V ---
-                indicator_string = indicator_cache_copy.get(token)
-                if indicator_string:
-                    queue_update(MONTH_SORT_COL, indicator_string, "@", bg_color=None)
-                # --- END: MODIFIED logic for Column V ---
+                month_val_str = str(input_data.get(f'{MONTH_SORT_COL}{row_num}') or '')
+                try:
+                    month_val = int(month_val_str)
+                    cell_color = YELLOW_COLOR if month_val >= 3 else None
+                    queue_update(MONTH_SORT_COL, month_val, "0", bg_color=cell_color)
+                except (ValueError, TypeError): queue_update(MONTH_SORT_COL, month_val_str, "@", bg_color=None)
                 days_duration = ""
                 if entry_date_str:
                     try:
@@ -1319,57 +1207,30 @@ def run_initial_setup_data_fetch(initial_data_ready_event): # Background thread 
         logger.info("Initial data fetch is complete. Handing over to the scheduler for timed checks.")
     except Exception as e: logger.exception(f"An error occurred during initial data fetch: {e}")
     finally: initial_data_ready_event.set()
-def sort_full_positions(): # MODIFIED: Reads, sorts, and writes back the Full Positions section based on the automated Column V indicator.
-    logger.info("Performing automatic sort of Full Positions based on HH-LL indicator...")
+def sort_full_positions(): # Reads, sorts, and writes back the Full Positions section based on Columns W and Y.
+    logger.info("Performing automatic sort of Full Positions...")
     try:
         last_row = get_last_row_in_column(Dashboard, FULL_SYMBOL_COL)
         if last_row < START_ROW_DATA:
             logger.info("No data in Full Positions to sort."); return
         range_to_sort, token_range = f"{FULL_EXCHANGE_COL}{START_ROW_DATA}:{FULL_POSITIONS_END_COL}{last_row}", f"{ATH_CACHE_Z_COL_DASH}{START_ROW_DATA}:{ATH_CACHE_Z_COL_DASH}{last_row}"
         dashboard_data, token_data = Dashboard.get(range_to_sort), ATHCache.get(token_range)
-        if not dashboard_data:
-            logger.info("Dashboard data for sorting is empty. Skipping."); return
-            
         combined_data = []
-        month_col_index = col_to_num(MONTH_SORT_COL) - col_to_num(FULL_EXCHANGE_COL)
-        swing_low_col_index = col_to_num(PERCENT_FROM_SWING_LOW_COL) - col_to_num(FULL_EXCHANGE_COL)
-
+        month_col_index, swing_low_col_index = col_to_num(MONTH_SORT_COL) - col_to_num(FULL_EXCHANGE_COL), col_to_num(PERCENT_FROM_SWING_LOW_COL) - col_to_num(FULL_EXCHANGE_COL)
         for i, row_data in enumerate(dashboard_data):
-            # --- START: New sorting value extraction ---
-            indicator_string = row_data[month_col_index] if len(row_data) > month_col_index else "N/AMonth"
-            month_val = float('inf') # Default for N/A to sort to the bottom
-            match = re.search(r'^(\d+)', str(indicator_string))
-            if match:
-                try: month_val = int(match.group(1))
-                except (ValueError, TypeError): pass
-            # --- END: New sorting value extraction ---
-            
             def to_float(value, is_percent=False):
                 try:
-                    s_val = str(value).strip().replace('%', '').replace(',', '')
-                    if not s_val: return -float('inf')
-                    return float(s_val)
+                    if is_percent: return float(str(value).strip().replace('%', ''))
+                    return float(value)
                 except (ValueError, TypeError): return -float('inf')
-            
+            month_val = to_float(row_data[month_col_index]) if len(row_data) > month_col_index else -float('inf')
             swing_low_pct_val = to_float(row_data[swing_low_col_index], is_percent=True) if len(row_data) > swing_low_col_index else -float('inf')
             combined_data.append({'dashboard_row': row_data, 'token_row': token_data[i] if i < len(token_data) else [''], 'sort_month': month_val, 'sort_swing_low': swing_low_pct_val, 'original_index': i})
-        
-        # Sort ascending by month (freshest signals first), then descending by swing low %
-        sorted_combined_data = sorted(combined_data, key=lambda x: (x['sort_month'], -x['sort_swing_low']))
-        
+        sorted_combined_data = sorted(combined_data, key=lambda x: (x['sort_month'], x['sort_swing_low']), reverse=True)
         if all(item['original_index'] == i for i, item in enumerate(sorted_combined_data)):
             logger.info("No change in sort order. Skipping sheet update."); return
-        
         logger.info("Change in sort order detected. Updating Google Sheet.")
-        sorted_dashboard_data = [item['dashboard_row'] for item in sorted_combined_data]
-        sorted_token_data = [item['token_row'] for item in sorted_combined_data]
-
-        # Pad rows to ensure they all have the same length before writing
-        max_cols_dash = len(range_to_sort.split(':')[0]) - 1
-        num_cols = col_to_num(FULL_POSITIONS_END_COL) - col_to_num(FULL_EXCHANGE_COL) + 1
-        for row in sorted_dashboard_data:
-            while len(row) < num_cols: row.append('')
-
+        sorted_dashboard_data, sorted_token_data = [item['dashboard_row'] for item in sorted_combined_data], [item['token_row'] for item in sorted_combined_data]
         Dashboard.update(range_to_sort, sorted_dashboard_data, value_input_option='USER_ENTERED')
         ATHCache.update(token_range, sorted_token_data, value_input_option='USER_ENTERED')
         logger.info("Successfully sorted and updated Full Positions on the Google Sheet.")
@@ -1381,9 +1242,6 @@ def run_background_task_scheduler(initial_data_ready_event): # Main scheduler fo
     initial_data_ready_event.wait()
     logger.info("Initial data is ready. Scheduler is now running.")
     last_checked_minute_15min, last_checked_minute_30min, last_checked_minute_1hr, last_scan_time, last_sort_time, last_monthly_high_fetch_time = None, None, None, 0, 0, 0
-    # --- START: New state variable for daily indicator analysis ---
-    last_indicator_analysis_time = 0
-    # --- END: New state variable ---
     try:
         j_values = Dashboard.get(f"{SETUP_LOG_COL}{START_ROW_DATA}:{SETUP_LOG_COL}{SETUP_MAX_ROW}")
         for i, cell in enumerate(j_values): previous_j_column_state[START_ROW_DATA + i] = cell[0] if cell else ""
@@ -1459,12 +1317,6 @@ def run_background_task_scheduler(initial_data_ready_event): # Main scheduler fo
                         subscribed_tokens.update(tokens)
                         logger.info(f"Subscribed to {len(tokens)} new tokens on exchange type {ex_type}.")
                 last_scan_time = time.time()
-            # --- START: New daily trigger for indicator analysis ---
-            if time.time() - last_indicator_analysis_time > 86400: # 86400 seconds = 24 hours
-                # Run analysis in a background thread to not block the main scheduler
-                threading.Thread(target=run_full_indicator_analysis, daemon=True).start()
-                last_indicator_analysis_time = time.time()
-            # --- END: New daily trigger for indicator analysis ---
             if time.time() - last_monthly_high_fetch_time > 86400:
                 logger.info("Performing daily fetch for monthly highs (for Swing Low setup)...")
                 with data_lock: unique_tokens_3pct = list(set([(token, details[0]['exchange_type']) for token, details in excel_3pct_setup_details.items() if details]))
