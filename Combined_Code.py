@@ -697,16 +697,23 @@ def check_and_update_all_breakdown_statuses(): # MODIFIED: Finds the *exact* 15-
                     candle_close_time = first_breakdown_candle['start_time'] + timedelta(minutes=15)
                     new_status = f"Yes ({candle_close_time.strftime('%d %b, %I:%M %p')})"
                 else: new_status = ""
-                if new_status.strip() != current_status.strip(): # Queue updates only if status has changed
-                    cell_range = {"sheetId": dashboard_sheet_id, "startRowIndex": row - 1, "endRowIndex": row, "startColumnIndex": col_to_num(setup['status_col']) - 1, "endColumnIndex": col_to_num(setup['status_col'])}
-                    bg_color = RED_COLOR if new_status.startswith("Yes") else None
-                    cell_data = {"userEnteredValue": {"stringValue": new_status}, "userEnteredFormat": {"backgroundColor": rgb_to_float(bg_color)}}
-                    fields = "userEnteredValue,userEnteredFormat.backgroundColor"
-                    requests_queued.append({"updateCells": {"rows": [{"values": [cell_data]}], "fields": fields, "range": cell_range}})
+                
+                # --- FIX STARTS HERE ---
+                # The conditional check 'if new_status != current_status:' has been removed.
+                # This block now runs on every check to forcefully ensure both the cell value and the
+                # background color are always correct, fixing any visual inconsistencies.
+                cell_range = {"sheetId": dashboard_sheet_id, "startRowIndex": row - 1, "endRowIndex": row, "startColumnIndex": col_to_num(setup['status_col']) - 1, "endColumnIndex": col_to_num(setup['status_col'])}
+                bg_color = RED_COLOR if new_status.startswith("Yes") else None
+                cell_data = {"userEnteredValue": {"stringValue": new_status}, "userEnteredFormat": {"backgroundColor": rgb_to_float(bg_color)}}
+                fields = "userEnteredValue,userEnteredFormat.backgroundColor"
+                requests_queued.append({"updateCells": {"rows": [{"values": [cell_data]}], "fields": fields, "range": cell_range}})
+                # --- FIX ENDS HERE ---
+
     if requests_queued:
         gsheet.batch_update({'requests': requests_queued})
-        logger.info(f"Applied {len(requests_queued)} precise breakdown status updates to Dashboard.")
-    else: logger.info("No precise breakdown status updates were needed.")
+        logger.info(f"Forcefully applied {len(requests_queued)} breakdown status updates to ensure visual consistency.")
+    else: 
+        logger.info("No breakdown symbols found to check statuses for.")
 # --- END: MODIFIED Breakdown Logic ---
 
 def check_and_update_breakdown_status(): # Checks for a change in breakdown status to trigger the "Sell" alert.
@@ -1484,4 +1491,3 @@ def run_threaded_logic(): # Starts the main application logic in a separate thre
 if __name__ == "__main__": # Main entry point for Flask + Threaded Logic.
     run_threaded_logic()
     app.run(host="0.0.0.0", port=int(os.environ.get("PORT", 8080)))
-
