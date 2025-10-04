@@ -500,7 +500,6 @@ def calculate_and_cache_monthly_highs_streak():
         tokens_to_check = list(set([(token, details[0]['exchange_type']) for token, details in excel_3pct_setup_details.items() if details]))
     
     today = get_ist_time()
-    # Go back 3 years to ensure we have enough data for a long streak
     from_dt = today - relativedelta(years=3)
     from_date_str = from_dt.strftime("%Y-%m-%d %H:%M")
     to_date_str = today.strftime("%Y-%m-%d %H:%M")
@@ -518,42 +517,39 @@ def calculate_and_cache_monthly_highs_streak():
                 logger.warning(f"Could not fetch monthly data for token {token}. Response: {response.get('message', 'Unknown error')}")
                 continue
 
-            # Process data into monthly highs
             monthly_highs = collections.OrderedDict()
             for c in response["data"]:
-                # The timestamp is the start of the month
                 month_key = datetime.datetime.fromisoformat(c[0]).strftime('%Y-%m')
-                monthly_highs[month_key] = c[2] # High price
+                monthly_highs[month_key] = c[2]
 
             if not monthly_highs:
                 new_cache[token] = 0
                 continue
 
-            # Convert to list of tuples and sort just in case API doesn't guarantee order
             sorted_months = sorted(monthly_highs.items(), key=lambda item: item[0])
             
-            # The last item is the current, incomplete month. We start checking from the one before it.
             if len(sorted_months) < 2:
                 new_cache[token] = 0
                 continue
 
             streak = 0
-            # Start from the second to last month (last completed month)
             for i in range(len(sorted_months) - 2, 0, -1):
                 current_month_high = sorted_months[i][1]
                 prev_month_high = sorted_months[i-1][1]
                 if current_month_high > prev_month_high:
                     streak += 1
                 else:
-                    break # Streak is broken
+                    break
             
             new_cache[token] = streak
             logger.info(f"Calculated monthly higher-highs streak for token {token}: {streak} Months")
 
         except Exception as e:
             logger.error(f"Exception calculating monthly streak for token {token}: {e}")
-            new_cache[token] = 0 # Default to 0 on error
-        time.sleep(0.5)
+            new_cache[token] = 0
+        # --- MODIFICATION START: Increased delay to avoid rate limiting ---
+        time.sleep(1.1)
+        # --- MODIFICATION END ---
         
     with data_lock:
         monthly_higher_highs_cache = new_cache
