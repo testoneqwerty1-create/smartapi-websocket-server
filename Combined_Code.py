@@ -1233,21 +1233,30 @@ def calculate_multi_timeframe_higher_highs(daily_candles, token, symbol):
 
     # --- Weekly Calculation ---
     week_count = 0
-    weekly_data = collections.defaultdict(lambda: {'high': 0, 'close': None, 'date': None, 'week_num': ''})
+    weekly_data = collections.defaultdict(lambda: {'high': 0, 'close': None, 'date': None, 'week_num': '', 'start_date': None, 'end_date': None})
     for candle in completed_candles:
         candle_date = candle['start_time'].date()
         week_key = candle_date.strftime('%Y-%W')
+        
+        if weekly_data[week_key]['start_date'] is None: weekly_data[week_key]['start_date'] = candle_date
+        weekly_data[week_key]['end_date'] = candle_date
+        
         weekly_data[week_key]['high'] = max(weekly_data[week_key]['high'], candle['high'])
         if weekly_data[week_key]['date'] is None or candle_date > weekly_data[week_key]['date']:
             weekly_data[week_key]['close'] = candle['close']
             weekly_data[week_key]['date'] = candle_date
             weekly_data[week_key]['week_num'] = week_key
-    
+
+    current_week_key = today.strftime('%Y-%W')
+    if current_week_key in weekly_data:
+        logger.info(f"{log_prefix} Discarding incomplete week {current_week_key} for weekly calculation.")
+        del weekly_data[current_week_key]
+
     sorted_weeks = sorted(weekly_data.values(), key=lambda item: item['date'])
     if len(sorted_weeks) >= 2:
         last_week = sorted_weeks[-1]
         prev_week = sorted_weeks[-2]
-        logger.info(f"{log_prefix} [WEEKLY CHECK] Initial: Is Week {last_week['week_num']} Close ({last_week['close']:.2f}) > Week {prev_week['week_num']} High ({prev_week['high']:.2f})?")
+        logger.info(f"{log_prefix} [WEEKLY CHECK] Initial: Is Week {last_week['week_num']} ({last_week['start_date']} to {last_week['end_date']}) Close ({last_week['close']:.2f}) > Week {prev_week['week_num']} ({prev_week['start_date']} to {prev_week['end_date']}) High ({prev_week['high']:.2f})?")
         if last_week['close'] > prev_week['high']:
             logger.info(f"{log_prefix} [WEEKLY CHECK] PASSED. Initial count is 1.")
             week_count = 1
@@ -1266,7 +1275,7 @@ def calculate_multi_timeframe_higher_highs(daily_candles, token, symbol):
 
     # --- Monthly Calculation ---
     month_count = 0
-    monthly_data = collections.defaultdict(lambda: {'high': 0, 'close': None, 'date': None})
+    monthly_data = collections.defaultdict(lambda: {'high': 0, 'close': None, 'date': None, 'month_key': ''})
     for candle in completed_candles:
         candle_date = candle['start_time'].date()
         month_key = candle_date.strftime('%Y-%m')
@@ -1274,19 +1283,25 @@ def calculate_multi_timeframe_higher_highs(daily_candles, token, symbol):
         if monthly_data[month_key]['date'] is None or candle_date > monthly_data[month_key]['date']:
             monthly_data[month_key]['close'] = candle['close']
             monthly_data[month_key]['date'] = candle_date
+            monthly_data[month_key]['month_key'] = month_key
     
+    current_month_key = today.strftime('%Y-%m')
+    if current_month_key in monthly_data:
+        logger.info(f"{log_prefix} Discarding incomplete month {current_month_key} for monthly calculation.")
+        del monthly_data[current_month_key]
+
     sorted_months = sorted(monthly_data.values(), key=lambda item: item['date'])
     if len(sorted_months) >= 2:
         last_month = sorted_months[-1]
         prev_month = sorted_months[-2]
-        logger.info(f"{log_prefix} [MONTHLY CHECK] Initial: Is {last_month['date'].strftime('%Y-%m')} Close ({last_month['close']:.2f}) > {prev_month['date'].strftime('%Y-%m')} High ({prev_month['high']:.2f})?")
+        logger.info(f"{log_prefix} [MONTHLY CHECK] Initial: Is Month {last_month['month_key']} Close ({last_month['close']:.2f}) > Month {prev_month['month_key']} High ({prev_month['high']:.2f})?")
         if last_month['close'] > prev_month['high']:
             logger.info(f"{log_prefix} [MONTHLY CHECK] PASSED. Initial count is 1.")
             month_count = 1
             for i in range(len(sorted_months) - 2, 0, -1):
                 current_month = sorted_months[i]
                 lookback_month = sorted_months[i-1]
-                logger.info(f"{log_prefix} [MONTHLY CHECK] Chained: Is {current_month['date'].strftime('%Y-%m')} High ({current_month['high']:.2f}) > {lookback_month['date'].strftime('%Y-%m')} High ({lookback_month['high']:.2f})?")
+                logger.info(f"{log_prefix} [MONTHLY CHECK] Chained: Is Month {current_month['month_key']} High ({current_month['high']:.2f}) > Month {lookback_month['month_key']} High ({lookback_month['high']:.2f})?")
                 if current_month['high'] > lookback_month['high']:
                     month_count += 1
                     logger.info(f"{log_prefix} [MONTHLY CHECK] PASSED. Count is now {month_count}.")
