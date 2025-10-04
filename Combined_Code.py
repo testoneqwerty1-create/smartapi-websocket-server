@@ -69,6 +69,7 @@ volume_history_3pct = collections.defaultdict(lambda: collections.defaultdict(li
 support_candle_details = {} # NEW: Cache for storing precise support candle date and time.
 previous_day_high_cache = {}
 monthly_high_cache = {}
+monthly_higher_highs_cache = {} # NEW: Cache for the Column V calculation
 orh_triggered_today = set() # State Tracking: Stores tokens that have already triggered to prevent re-checking
 previous_j_column_state = {}
 sell_triggered_today = set()
@@ -490,6 +491,73 @@ def fetch_monthly_highs(smart_api_obj, tokens_to_fetch): # Fetches high of curre
             else: logger.warning(f"Could not fetch monthly data for token {token}. Response: {response.get('message', 'Unknown error')}")
         except Exception as e: logger.error(f"Exception fetching monthly data for token {token}: {e}")
         time.sleep(0.5)
+
+# --- NEW FUNCTION: For calculating monthly higher-highs streak ---
+def calculate_and_cache_monthly_highs_streak():
+    global monthly_higher_highs_cache
+    logger.info("Starting daily calculation for monthly higher-highs streak...")
+    with data_lock:
+        tokens_to_check = list(set([(token, details[0]['exchange_type']) for token, details in excel_3pct_setup_details.items() if details]))
+    
+    today = get_ist_time()
+    # Go back 3 years to ensure we have enough data for a long streak
+    from_dt = today - relativedelta(years=3)
+    from_date_str = from_dt.strftime("%Y-%m-%d %H:%M")
+    to_date_str = today.strftime("%Y-%m-%d %H:%M")
+
+    new_cache = {}
+    for token, exchange_type in tokens_to_check:
+        try:
+            exchange_str = {1: "NSE", 2: "NFO", 3: "BSE"}.get(exchange_type)
+            if not exchange_str: continue
+
+            historic_param = {"exchange": exchange_str, "symboltoken": token, "interval": "ONE_MONTH", "fromdate": from_date_str, "todate": to_date_str}
+            response = smart_api_obj.getCandleData(historic_param)
+            
+            if not (response and response.get("status") and response.get("data")):
+                logger.warning(f"Could not fetch monthly data for token {token}. Response: {response.get('message', 'Unknown error')}")
+                continue
+
+            # Process data into monthly highs
+            monthly_highs = collections.OrderedDict()
+            for c in response["data"]:
+                # The timestamp is the start of the month
+                month_key = datetime.datetime.fromisoformat(c[0]).strftime('%Y-%m')
+                monthly_highs[month_key] = c[2] # High price
+
+            if not monthly_highs:
+                new_cache[token] = 0
+                continue
+
+            # Convert to list of tuples and sort just in case API doesn't guarantee order
+            sorted_months = sorted(monthly_highs.items(), key=lambda item: item[0])
+            
+            # The last item is the current, incomplete month. We start checking from the one before it.
+            if len(sorted_months) < 2:
+                new_cache[token] = 0
+                continue
+
+            streak = 0
+            # Start from the second to last month (last completed month)
+            for i in range(len(sorted_months) - 2, 0, -1):
+                current_month_high = sorted_months[i][1]
+                prev_month_high = sorted_months[i-1][1]
+                if current_month_high > prev_month_high:
+                    streak += 1
+                else:
+                    break # Streak is broken
+            
+            new_cache[token] = streak
+            logger.info(f"Calculated monthly higher-highs streak for token {token}: {streak} Months")
+
+        except Exception as e:
+            logger.error(f"Exception calculating monthly streak for token {token}: {e}")
+            new_cache[token] = 0 # Default to 0 on error
+        time.sleep(0.5)
+        
+    with data_lock:
+        monthly_higher_highs_cache = new_cache
+    logger.info("Finished daily calculation for monthly higher-highs streak.")
 
 # --- Hybrid ORH Logic ---
 def schedule_orh_check(token): # Schedules the historical ORH check to run after a delay.
@@ -913,7 +981,6 @@ def scan_sheet_for_all_symbols(Dashboard, ATHCache): # Unified function to scan 
             exchange_focus, symbol_focus = get_cell_value(all_dashboard_values, row, FOCUS_EXCHANGE_COL), get_cell_value(all_dashboard_values, row, FOCUS_SYMBOL_COL)
             if exchange_focus and symbol_focus: process_symbol(symbol_focus, exchange_focus, row, ATH_CACHE_Y_COL_DASH, {'ltp_col': FOCUS_LTP_COL, 'chg_col': FOCUS_CHG_COL, 'block_type': 'Focus List', 'symbol_col': FOCUS_SYMBOL_COL, 'token_cache_col': ATH_CACHE_Y_COL_DASH})
             
-            # --- MODIFICATION START: Check if the row is in any defined position section ---
             is_full_pos_row = FULL_POSITIONS_ROWS[0] <= row <= FULL_POSITIONS_ROWS[1]
             is_half_pos_row = HALF_POSITIONS_ROWS[0] <= row <= HALF_POSITIONS_ROWS[1]
             is_quarter_pos_row = QUARTER_POSITIONS_ROWS[0] <= row <= QUARTER_POSITIONS_ROWS[1]
@@ -922,11 +989,8 @@ def scan_sheet_for_all_symbols(Dashboard, ATHCache): # Unified function to scan 
             if is_a_position_row:
                 exchange_pos, symbol_pos = get_cell_value(all_dashboard_values, row, FULL_EXCHANGE_COL), get_cell_value(all_dashboard_values, row, FULL_SYMBOL_COL)
                 if exchange_pos and symbol_pos:
-                    # Process for live data dashboard
                     process_symbol(symbol_pos, exchange_pos, row, ATH_CACHE_Z_COL_DASH, {'ltp_col': FULL_LTP_COL, 'chg_col': '', 'block_type': 'Full Positions', 'symbol_col': FULL_SYMBOL_COL, 'token_cache_col': ATH_CACHE_Z_COL_DASH, 'price_col': FULL_PRICE_COL, 'qty_col': FULL_QTY_COL, 'return_amt_col': FULL_RETURN_AMT_COL, 'return_pct_col': FULL_RETURN_PCT_COL, 'swing_low_input_col': SWING_LOW_INPUT_COL, 'percent_from_swing_low_col': PERCENT_FROM_SWING_LOW_COL, 'highest_up_candle_col': HIGHEST_UP_CANDLE_COL, 'entry_date_col': FULL_ENTRY_DATE_COL, 'days_duration_col': FULL_DAYS_DURATION_COL})
-                    # Process for 3% down setup logic
                     process_symbol(symbol_pos, exchange_pos, row, PCT_TOKEN_COL_3PCT, {'setup_type': '3PCT', 'symbol_col': PCT_SYMBOL_COL_3PCT})
-            # --- MODIFICATION END ---
             
             exchange_setup, symbol_setup = get_cell_value(all_dashboard_values, row, SETUP_EXCHANGE_COL), get_cell_value(all_dashboard_values, row, SETUP_SYMBOL_COL)
             if exchange_setup and symbol_setup and row <= SETUP_MAX_ROW:
@@ -959,6 +1023,7 @@ def update_excel_live_data(): # Updates the Google Sheet with live data and Swin
     with data_lock:
         dashboard_details_copy = excel_dashboard_details.copy()
         monthly_high_cache_copy = monthly_high_cache.copy()
+        monthly_hh_cache_copy = monthly_higher_highs_cache.copy() # NEW
     if not smart_ws or not smart_ws._is_connected_flag:
         logger.warning("WebSocket not connected. Skipping Google Sheet update."); return
     requests, cells_to_color_this_cycle = [], set()
@@ -980,7 +1045,7 @@ def update_excel_live_data(): # Updates the Google Sheet with live data and Swin
                 if details.get("qty_col"): input_ranges.append(f'{details["qty_col"]}{row_num}')
                 if details.get("entry_date_col"): input_ranges.append(f'{details["entry_date_col"]}{row_num}')
                 if details.get("swing_low_input_col"): input_ranges.append(f'{details["swing_low_input_col"]}{row_num}')
-                input_ranges.append(f'{MONTH_SORT_COL}{row_num}')
+                # Column V is now automated, so we don't need to read it.
     input_data = {}
     if input_ranges:
         try:
@@ -1058,12 +1123,17 @@ def update_excel_live_data(): # Updates the Google Sheet with live data and Swin
                         queue_update(details.get('percent_from_swing_low_col'), percent_from_high, "0.00%", bg_color=cell_color)
                     else: queue_update(details.get('percent_from_swing_low_col'), "No High", "@", bg_color=None)
                 else: queue_update(details.get('percent_from_swing_low_col'), "", "General", bg_color=None)
-                month_val_str = str(input_data.get(f'{MONTH_SORT_COL}{row_num}') or '')
-                try:
-                    month_val = int(month_val_str)
-                    cell_color = YELLOW_COLOR if month_val >= 3 else None
-                    queue_update(MONTH_SORT_COL, month_val, "0", bg_color=cell_color)
-                except (ValueError, TypeError): queue_update(MONTH_SORT_COL, month_val_str, "@", bg_color=None)
+                
+                # --- MODIFICATION START: Update Column V with automated calculation ---
+                hh_count = monthly_hh_cache_copy.get(token, 0)
+                if hh_count > 0:
+                    month_text = f"{hh_count} Month" if hh_count == 1 else f"{hh_count} Months"
+                    cell_color = YELLOW_COLOR if hh_count >= 3 else None
+                    queue_update(MONTH_SORT_COL, month_text, "@", bg_color=cell_color)
+                else:
+                    queue_update(MONTH_SORT_COL, "", "@", bg_color=None)
+                # --- MODIFICATION END ---
+                
                 days_duration = ""
                 if entry_date_str:
                     try:
@@ -1203,14 +1273,10 @@ def run_initial_setup_data_fetch(initial_data_ready_event): # Background thread 
     except Exception as e: logger.exception(f"An error occurred during initial data fetch: {e}")
     finally: initial_data_ready_event.set()
 
-# --- MODIFICATION START: New helper function to sort one section at a time ---
 def _sort_single_section(name, start_row, end_row):
     logger.info(f"Sorting '{name}' section (Rows: {start_row}-{end_row})...")
-    
-    # Get the last row with data specifically within this section's symbol column to avoid reading unnecessary empty rows.
     all_symbols_in_col = Dashboard.col_values(col_to_num(FULL_SYMBOL_COL))
     last_row_in_section = 0
-    # Iterate backwards from the end of the section to find the last non-empty symbol cell
     for i in range(end_row, start_row - 1, -1):
         row_index = i - 1
         if row_index < len(all_symbols_in_col) and all_symbols_in_col[row_index]:
@@ -1223,7 +1289,6 @@ def _sort_single_section(name, start_row, end_row):
 
     range_to_sort = f"{FULL_EXCHANGE_COL}{start_row}:{FULL_POSITIONS_END_COL}{last_row_in_section}"
     token_range = f"{ATH_CACHE_Z_COL_DASH}{start_row}:{ATH_CACHE_Z_COL_DASH}{last_row_in_section}"
-    
     dashboard_data, token_data = Dashboard.get(range_to_sort), ATHCache.get(token_range)
     
     expected_rows = last_row_in_section - start_row + 1
@@ -1238,15 +1303,23 @@ def _sort_single_section(name, start_row, end_row):
     symbol_col_index = col_to_num(FULL_SYMBOL_COL) - col_to_num(FULL_EXCHANGE_COL)
 
     for i, row_data in enumerate(dashboard_data):
-        original_data_map[i] = row_data # Store original data for comparison
-        def to_float(value, is_percent=False):
-            try:
-                if is_percent: return float(str(value).strip().replace('%', ''))
-                return float(value)
-            except (ValueError, TypeError): return -float('inf')
+        original_data_map[i] = row_data
         
         if len(row_data) > symbol_col_index and row_data[symbol_col_index]:
-            month_val = to_float(row_data[month_col_index]) if len(row_data) > month_col_index else -float('inf')
+            # --- MODIFICATION START: Parse "X Months" string for sorting ---
+            month_val_str = str(row_data[month_col_index]) if len(row_data) > month_col_index else ''
+            try:
+                month_val = int(re.search(r'\d+', month_val_str).group()) if month_val_str else -1
+            except (ValueError, TypeError, AttributeError):
+                month_val = -float('inf')
+            # --- MODIFICATION END ---
+            
+            def to_float(value, is_percent=False):
+                try:
+                    if is_percent: return float(str(value).strip().replace('%', ''))
+                    return float(value)
+                except (ValueError, TypeError): return -float('inf')
+            
             swing_low_pct_val = to_float(row_data[swing_low_col_index], is_percent=True) if len(row_data) > swing_low_col_index else -float('inf')
             combined_data.append({'dashboard_row': row_data, 'token_row': token_data[i] if i < len(token_data) else [''], 'sort_month': month_val, 'sort_swing_low': swing_low_pct_val})
 
@@ -1261,16 +1334,15 @@ def _sort_single_section(name, start_row, end_row):
     
     is_already_sorted = True
     for i, sorted_row in enumerate(final_dashboard_data):
-        if i not in original_data_map or original_data_map[i] != sorted_row:
+        if i >= len(dashboard_data) or dashboard_data[i] != sorted_row:
             is_already_sorted = False
             break
-    if len(final_dashboard_data) != len(original_data_map): is_already_sorted = False # If number of rows changed (e.g. blanks removed)
+    if len(final_dashboard_data) != len(combined_data): is_already_sorted = False
 
-    if is_already_sorted:
+    if is_already_sorted and len(combined_data) == expected_rows:
         logger.info(f"No change in sort order for '{name}'. Skipping sheet update.")
         return
 
-    # Create final lists with blank rows at the end to clear old data if needed
     final_dashboard_with_blanks = final_dashboard_data + [[''] * (col_to_num(FULL_POSITIONS_END_COL) - col_to_num(FULL_EXCHANGE_COL) + 1) for _ in range(expected_rows - len(final_dashboard_data))]
     final_token_with_blanks = final_token_data + [[''] for _ in range(expected_rows - len(final_token_data))]
 
@@ -1291,7 +1363,6 @@ def sort_all_position_sections():
             _sort_single_section(name, start_row, end_row)
         except Exception as e:
             logger.exception(f"An error occurred during the sorting process for section '{name}': {e}")
-# --- MODIFICATION END: Replaced the old sort function ---
 
 def run_background_task_scheduler(initial_data_ready_event): # Main scheduler for slower tasks like sheet scanning and trade setup checks.
     global subscribed_tokens, excel_dashboard_details, excel_orh_setup_details, excel_3pct_setup_details, previous_j_column_state, previous_ah_column_state, previous_breakdown_state
@@ -1300,6 +1371,9 @@ def run_background_task_scheduler(initial_data_ready_event): # Main scheduler fo
     initial_data_ready_event.wait()
     logger.info("Initial data is ready. Scheduler is now running.")
     last_checked_minute_15min, last_checked_minute_30min, last_checked_minute_1hr, last_scan_time, last_sort_time, last_monthly_high_fetch_time = None, None, None, 0, 0, 0
+    # --- MODIFICATION START: Added a timer for the new Column V calculation ---
+    last_hh_streak_calc_time = 0
+    # --- MODIFICATION END ---
     try:
         j_values = Dashboard.get(f"{SETUP_LOG_COL}{START_ROW_DATA}:{SETUP_LOG_COL}{SETUP_MAX_ROW}")
         for i, cell in enumerate(j_values): previous_j_column_state[START_ROW_DATA + i] = cell[0] if cell else ""
@@ -1344,7 +1418,7 @@ def run_background_task_scheduler(initial_data_ready_event): # Main scheduler fo
                             if token_to_trigger := token_map_orh.get(row_num): process_manual_orh_trigger(token_to_trigger, row_num)
                             else: logger.warning(f"Could not find token for manual ORH trigger on row {row_num}.")
                         previous_j_column_state[row_num] = current_val
-                    last_row_full = get_last_row_in_column(Dashboard, FULL_SYMBOL_COL)
+                    last_row_full = max(QUARTER_POSITIONS_ROWS[1], get_last_row_in_column(Dashboard, FULL_SYMBOL_COL))
                     if last_row_full >= START_ROW_DATA:
                         current_ah_values = Dashboard.get(f"{ACTION_COL}{START_ROW_DATA}:{ACTION_COL}{last_row_full}")
                         token_map_3pct = {details['row']: token for token, details_list in new_3pct.items() for details in details_list}
@@ -1380,6 +1454,13 @@ def run_background_task_scheduler(initial_data_ready_event): # Main scheduler fo
                 with data_lock: unique_tokens_3pct = list(set([(token, details[0]['exchange_type']) for token, details in excel_3pct_setup_details.items() if details]))
                 if unique_tokens_3pct: fetch_monthly_highs(smart_api_obj, unique_tokens_3pct)
                 last_monthly_high_fetch_time = time.time()
+            
+            # --- MODIFICATION START: Call the new function daily ---
+            if time.time() - last_hh_streak_calc_time > 86400: # 86400 seconds = 24 hours
+                calculate_and_cache_monthly_highs_streak()
+                last_hh_streak_calc_time = time.time()
+            # --- MODIFICATION END ---
+
             if time.time() - last_sort_time > 3600: # Changed to sort more frequently
                 sort_all_position_sections()
                 last_sort_time = time.time()
@@ -1501,7 +1582,9 @@ def start_main_application(): # Primary function to initialize connections and r
     excel_dashboard_details, excel_orh_setup_details, excel_3pct_setup_details = new_dashboard, new_orh, new_3pct
     logger.info("Performing initial one-time fetch for monthly highs and portfolio sort...")
     unique_tokens_3pct_startup = list(set([(token, details[0]['exchange_type']) for token, details in excel_3pct_setup_details.items() if details]))
-    if unique_tokens_3pct_startup: fetch_monthly_highs(smart_api_obj, unique_tokens_3pct_startup)
+    if unique_tokens_3pct_startup:
+        fetch_monthly_highs(smart_api_obj, unique_tokens_3pct_startup)
+        calculate_and_cache_monthly_highs_streak() # Initial calculation at startup
     sort_all_position_sections()
     try:
         logger.info("Initializing SmartAPI WebSocket...")
