@@ -69,9 +69,7 @@ volume_history_3pct = collections.defaultdict(lambda: collections.defaultdict(li
 support_candle_details = {} # NEW: Cache for storing precise support candle date and time.
 previous_day_high_cache = {}
 monthly_high_cache = {}
-# --- MODIFICATION START: New cache for the higher highs month count indicator ---
 higher_high_month_count_cache = {}
-# --- MODIFICATION END ---
 orh_triggered_today = set() # State Tracking: Stores tokens that have already triggered to prevent re-checking
 previous_j_column_state = {}
 sell_triggered_today = set()
@@ -1056,14 +1054,12 @@ def update_excel_live_data(): # Updates the Google Sheet with live data and Swin
                         queue_update(details.get('percent_from_swing_low_col'), percent_from_high, "0.00%", bg_color=cell_color)
                     else: queue_update(details.get('percent_from_swing_low_col'), "No High", "@", bg_color=None)
                 else: queue_update(details.get('percent_from_swing_low_col'), "", "General", bg_color=None)
-                # --- MODIFICATION START: New logic for Column V ---
                 month_count = higher_high_month_count_cache.get(token)
                 if month_count is not None:
                     display_text = f"{month_count} Month" + ("s" if month_count != 1 else "")
                     queue_update(MONTH_SORT_COL, display_text, "@", bg_color=None)
                 else:
                     queue_update(MONTH_SORT_COL, "Calculating...", "@", bg_color=None)
-                # --- MODIFICATION END ---
                 days_duration = ""
                 if entry_date_str:
                     try:
@@ -1203,9 +1199,11 @@ def run_initial_setup_data_fetch(initial_data_ready_event): # Background thread 
     except Exception as e: logger.exception(f"An error occurred during initial data fetch: {e}")
     finally: initial_data_ready_event.set()
 
-# --- MODIFICATION START: New functions for Higher Highs Month Count indicator ---
-def calculate_consecutive_higher_highs(daily_candles):
-    if not daily_candles or len(daily_candles) < 60: # Need at least a few months of data
+# --- MODIFICATION START: New functions for Higher Highs Month Count indicator with detailed logging ---
+def calculate_consecutive_higher_highs(daily_candles, token):
+    logger.info(f"--- [HH CALC for Token: {token}] ---")
+    if not daily_candles or len(daily_candles) < 60:
+        logger.info(f"[HH CALC for Token: {token}] Not enough daily candles ({len(daily_candles)}) to calculate. Returning 0.")
         return 0
 
     monthly_data = collections.defaultdict(lambda: {'high': 0, 'close': None, 'date': None})
@@ -1219,36 +1217,57 @@ def calculate_consecutive_higher_highs(daily_candles):
 
     sorted_months = sorted(monthly_data.items(), key=lambda item: item[1]['date'])
     
+    logger.info(f"[HH CALC for Token: {token}] Processed monthly data:")
+    for month_key, data in sorted_months[-5:]: # Log last 5 months
+        logger.info(f"  - {month_key}: High={data['high']:.2f}, Close={data['close']:.2f}")
+
     today = get_ist_time().date()
     is_current_month_present = sorted_months[-1][1]['date'].strftime('%Y-%m') == today.strftime('%Y-%m')
     
-    # We need at least 2 full prior months for the initial check
     required_months = 3 if is_current_month_present else 2
     if len(sorted_months) < required_months:
+        logger.info(f"[HH CALC for Token: {token}] Not enough historical months ({len(sorted_months)}) for comparison. Returning 0.")
         return 0
 
     last_completed_month_idx = -2 if is_current_month_present else -1
     
-    prev_month = sorted_months[last_completed_month_idx][1]
-    prev_to_prev_month = sorted_months[last_completed_month_idx - 1][1]
-
-    if not (prev_month['close'] > prev_to_prev_month['high']):
+    prev_month_key = sorted_months[last_completed_month_idx][0]
+    prev_month_data = sorted_months[last_completed_month_idx][1]
+    
+    prev_to_prev_month_key = sorted_months[last_completed_month_idx - 1][0]
+    prev_to_prev_month_data = sorted_months[last_completed_month_idx - 1][1]
+    
+    logger.info(f"[HH CALC for Token: {token}] [Initial Check] Comparing {prev_month_key} Close ({prev_month_data['close']:.2f}) > {prev_to_prev_month_key} High ({prev_to_prev_month_data['high']:.2f})")
+    if not (prev_month_data['close'] > prev_to_prev_month_data['high']):
+        logger.info(f"[HH CALC for Token: {token}] [Initial Check] FAILED. Returning 0.")
         return 0
-
+    
+    logger.info(f"[HH CALC for Token: {token}] [Initial Check] PASSED. Initial count is 1.")
     month_count = 1
     current_month_idx = last_completed_month_idx - 1
     
     while True:
-        if abs(current_month_idx - 1) >= len(sorted_months): break
+        if current_month_idx <= 0 or abs(current_month_idx) >= len(sorted_months):
+             logger.info(f"[HH CALC for Token: {token}] Reached the end of available historical data.")
+             break
             
+        current_month_key = sorted_months[current_month_idx][0]
         current_month_high = sorted_months[current_month_idx][1]['high']
+        
+        lookback_month_key = sorted_months[current_month_idx - 1][0]
         lookback_month_high = sorted_months[current_month_idx - 1][1]['high']
         
+        logger.info(f"[HH CALC for Token: {token}] [Chained Check] Comparing {current_month_key} High ({current_month_high:.2f}) > {lookback_month_key} High ({lookback_month_high:.2f})")
+
         if current_month_high > lookback_month_high:
+            logger.info(f"[HH CALC for Token: {token}] [Chained Check] PASSED. Incrementing count.")
             month_count += 1
             current_month_idx -= 1
         else:
+            logger.info(f"[HH CALC for Token: {token}] [Chained Check] FAILED. Breaking loop.")
             break
+            
+    logger.info(f"--- [HH CALC for Token: {token}] FINAL COUNT: {month_count} ---")
     return month_count
 
 def run_monthly_higher_high_calculator():
@@ -1275,15 +1294,14 @@ def run_monthly_higher_high_calculator():
 
             for token, exchange in list(tokens_to_check):
                 try:
-                    historic_param = {"exchange": exchange, "symboltoken": token, "interval": "ONE_DAY", "fromdate": from_date, "todate": to_date}
+                    historic_param = {"exchange": exchange, "symboltoken": str(token), "interval": "ONE_DAY", "fromdate": from_date, "todate": to_date}
                     response = smart_api_obj.getCandleData(historic_param)
                     
                     if response and response.get("status") and response.get("data"):
                         daily_candles = [{'start_time': datetime.datetime.fromisoformat(c[0]), 'open': c[1], 'high': c[2], 'low': c[3], 'close': c[4]} for c in response["data"]]
-                        month_count = calculate_consecutive_higher_highs(daily_candles)
+                        month_count = calculate_consecutive_higher_highs(daily_candles, token)
                         with data_lock:
                             higher_high_month_count_cache[token] = month_count
-                        logger.info(f"Calculated Higher Highs for token {token}: {month_count} Months.")
                     else:
                         logger.warning(f"Could not fetch daily history for token {token} for HH calc. Message: {response.get('message', 'Unknown error')}")
                 except Exception as e:
@@ -1331,9 +1349,10 @@ def _sort_single_section(name, start_row, end_row):
         original_data_map[i] = row_data
         def parse_month_count(value):
             try:
+                # Return a large negative number for non-parsing values to keep them at the bottom in descending sort
                 return int(str(value).strip().split(" ")[0])
             except (ValueError, TypeError, IndexError):
-                return float('inf')
+                return -999
         
         if len(row_data) > symbol_col_index and row_data[symbol_col_index]:
             month_val_str = row_data[month_col_index] if len(row_data) > month_col_index else ""
@@ -1344,7 +1363,7 @@ def _sort_single_section(name, start_row, end_row):
         logger.info(f"No non-empty rows to sort in '{name}' section.")
         return
 
-    sorted_combined_data = sorted(combined_data, key=lambda x: x['sort_key'], reverse=False)
+    sorted_combined_data = sorted(combined_data, key=lambda x: x['sort_key'], reverse=True)
     
     final_dashboard_data = [item['dashboard_row'] for item in sorted_combined_data]
     final_token_data = [item['token_row'] for item in sorted_combined_data]
@@ -1624,9 +1643,7 @@ def start_main_application(): # Primary function to initialize connections and r
     threading.Thread(target=run_quote_updater, daemon=True).start()
     threading.Thread(target=run_initial_setup_data_fetch, args=(initial_data_ready,), daemon=True).start()
     threading.Thread(target=run_background_task_scheduler, args=(initial_data_ready,), daemon=True).start()
-    # --- MODIFICATION START: Start the new thread for the indicator calculation ---
     threading.Thread(target=run_monthly_higher_high_calculator, daemon=True).start()
-    # --- MODIFICATION END ---
     logger.info("All systems are go! The application is now running.")
 def run_threaded_logic(): # Starts the main application logic in a separate thread.
     thread = threading.Thread(target=start_main_application, daemon=True)
@@ -1634,3 +1651,4 @@ def run_threaded_logic(): # Starts the main application logic in a separate thre
 if __name__ == "__main__": # Main entry point for Flask + Threaded Logic.
     run_threaded_logic()
     app.run(host="0.0.0.0", port=int(os.environ.get("PORT", 8080)))
+
