@@ -619,7 +619,7 @@ def check_and_update_price_volume_setups(): # MODIFIED: Checks for setups, forma
             if gainer_candles: highest_up_candidates[interval_api] = max(gainer_candles, key=lambda c: (c['close'] - c['open']) / c['open'])
         
         pct_down_str, pct_down_candles = get_consolidated_signals(three_pct_down_candidates)
-        high_vol_str, high_vol_candles = get_consolidated_signals(high_vol_candidates)
+        high_vol_str, high_vol_candles = get_consolidated_signals(high_vol_candles)
         highest_up_str, highest_up_candles = get_consolidated_signals(highest_up_candidates)
         for entry in symbol_entries:
             row = entry["row"]
@@ -1200,10 +1200,11 @@ def run_initial_setup_data_fetch(initial_data_ready_event): # Background thread 
     finally: initial_data_ready_event.set()
 
 # --- MODIFICATION START: New functions for Higher Highs Month Count indicator with detailed logging ---
-def calculate_consecutive_higher_highs(daily_candles, token):
-    logger.info(f"--- [HH CALC for Token: {token}] ---")
+def calculate_consecutive_higher_highs(daily_candles, token, symbol):
+    log_prefix = f"[HH CALC for {symbol} (Token: {token})]"
+    logger.info(f"--- {log_prefix} ---")
     if not daily_candles or len(daily_candles) < 60:
-        logger.info(f"[HH CALC for Token: {token}] Not enough daily candles ({len(daily_candles)}) to calculate. Returning 0.")
+        logger.info(f"{log_prefix} Not enough daily candles ({len(daily_candles)}) to calculate. Returning 0.")
         return 0
 
     monthly_data = collections.defaultdict(lambda: {'high': 0, 'close': None, 'date': None})
@@ -1217,7 +1218,7 @@ def calculate_consecutive_higher_highs(daily_candles, token):
 
     sorted_months = sorted(monthly_data.items(), key=lambda item: item[1]['date'])
     
-    logger.info(f"[HH CALC for Token: {token}] Processed monthly data:")
+    logger.info(f"{log_prefix} Processed monthly data:")
     for month_key, data in sorted_months[-5:]: # Log last 5 months
         logger.info(f"  - {month_key}: High={data['high']:.2f}, Close={data['close']:.2f}")
 
@@ -1226,7 +1227,7 @@ def calculate_consecutive_higher_highs(daily_candles, token):
     
     required_months = 3 if is_current_month_present else 2
     if len(sorted_months) < required_months:
-        logger.info(f"[HH CALC for Token: {token}] Not enough historical months ({len(sorted_months)}) for comparison. Returning 0.")
+        logger.info(f"{log_prefix} Not enough historical months ({len(sorted_months)}) for comparison. Returning 0.")
         return 0
 
     last_completed_month_idx = -2 if is_current_month_present else -1
@@ -1237,18 +1238,18 @@ def calculate_consecutive_higher_highs(daily_candles, token):
     prev_to_prev_month_key = sorted_months[last_completed_month_idx - 1][0]
     prev_to_prev_month_data = sorted_months[last_completed_month_idx - 1][1]
     
-    logger.info(f"[HH CALC for Token: {token}] [Initial Check] Comparing {prev_month_key} Close ({prev_month_data['close']:.2f}) > {prev_to_prev_month_key} High ({prev_to_prev_month_data['high']:.2f})")
+    logger.info(f"{log_prefix} [Initial Check] Comparing {prev_month_key} Close ({prev_month_data['close']:.2f}) > {prev_to_prev_month_key} High ({prev_to_prev_month_data['high']:.2f})")
     if not (prev_month_data['close'] > prev_to_prev_month_data['high']):
-        logger.info(f"[HH CALC for Token: {token}] [Initial Check] FAILED. Returning 0.")
+        logger.info(f"{log_prefix} [Initial Check] FAILED. Returning 0.")
         return 0
     
-    logger.info(f"[HH CALC for Token: {token}] [Initial Check] PASSED. Initial count is 1.")
+    logger.info(f"{log_prefix} [Initial Check] PASSED. Initial count is 1.")
     month_count = 1
     current_month_idx = last_completed_month_idx - 1
     
     while True:
         if current_month_idx <= 0 or abs(current_month_idx) >= len(sorted_months):
-             logger.info(f"[HH CALC for Token: {token}] Reached the end of available historical data.")
+             logger.info(f"{log_prefix} Reached the end of available historical data.")
              break
             
         current_month_key = sorted_months[current_month_idx][0]
@@ -1257,17 +1258,17 @@ def calculate_consecutive_higher_highs(daily_candles, token):
         lookback_month_key = sorted_months[current_month_idx - 1][0]
         lookback_month_high = sorted_months[current_month_idx - 1][1]['high']
         
-        logger.info(f"[HH CALC for Token: {token}] [Chained Check] Comparing {current_month_key} High ({current_month_high:.2f}) > {lookback_month_key} High ({lookback_month_high:.2f})")
+        logger.info(f"{log_prefix} [Chained Check] Comparing {current_month_key} High ({current_month_high:.2f}) > {lookback_month_key} High ({lookback_month_high:.2f})")
 
         if current_month_high > lookback_month_high:
-            logger.info(f"[HH CALC for Token: {token}] [Chained Check] PASSED. Incrementing count.")
+            logger.info(f"{log_prefix} [Chained Check] PASSED. Incrementing count.")
             month_count += 1
             current_month_idx -= 1
         else:
-            logger.info(f"[HH CALC for Token: {token}] [Chained Check] FAILED. Breaking loop.")
+            logger.info(f"{log_prefix} [Chained Check] FAILED. Breaking loop.")
             break
             
-    logger.info(f"--- [HH CALC for Token: {token}] FINAL COUNT: {month_count} ---")
+    logger.info(f"--- {log_prefix} FINAL COUNT: {month_count} ---")
     return month_count
 
 def run_monthly_higher_high_calculator():
@@ -1282,7 +1283,7 @@ def run_monthly_higher_high_calculator():
             for token, details_list in dashboard_details_copy.items():
                 for details in details_list:
                     if details.get('block_type') == 'Full Positions':
-                        tokens_to_check.add((token, details.get("exchange", "NSE").upper()))
+                        tokens_to_check.add((token, details.get("symbol"), details.get("exchange", "NSE").upper()))
                         break
 
             if not tokens_to_check:
@@ -1292,20 +1293,20 @@ def run_monthly_higher_high_calculator():
             from_date = (today - relativedelta(years=1)).strftime("%Y-%m-%d %H:%M")
             to_date = today.strftime("%Y-%m-%d %H:%M")
 
-            for token, exchange in list(tokens_to_check):
+            for token, symbol, exchange in list(tokens_to_check):
                 try:
                     historic_param = {"exchange": exchange, "symboltoken": str(token), "interval": "ONE_DAY", "fromdate": from_date, "todate": to_date}
                     response = smart_api_obj.getCandleData(historic_param)
                     
                     if response and response.get("status") and response.get("data"):
                         daily_candles = [{'start_time': datetime.datetime.fromisoformat(c[0]), 'open': c[1], 'high': c[2], 'low': c[3], 'close': c[4]} for c in response["data"]]
-                        month_count = calculate_consecutive_higher_highs(daily_candles, token)
+                        month_count = calculate_consecutive_higher_highs(daily_candles, token, symbol)
                         with data_lock:
                             higher_high_month_count_cache[token] = month_count
                     else:
-                        logger.warning(f"Could not fetch daily history for token {token} for HH calc. Message: {response.get('message', 'Unknown error')}")
+                        logger.warning(f"Could not fetch daily history for {symbol} (Token: {token}) for HH calc. Message: {response.get('message', 'Unknown error')}")
                 except Exception as e:
-                    logger.error(f"Exception calculating HH for token {token}: {e}")
+                    logger.error(f"Exception calculating HH for {symbol} (Token: {token}): {e}")
                 time.sleep(0.5)
 
             logger.info("Finished periodic check for Higher Highs month count. Sleeping for 4 hours.")
