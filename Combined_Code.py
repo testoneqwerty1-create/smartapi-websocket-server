@@ -511,6 +511,9 @@ def calculate_and_cache_monthly_highs_streak():
             if not exchange_str: continue
 
             historic_param = {"exchange": exchange_str, "symboltoken": token, "interval": "ONE_MONTH", "fromdate": from_date_str, "todate": to_date_str}
+            # --- MODIFICATION START: Added detailed logging ---
+            logger.info(f"Requesting monthly data for token {token} with params: {historic_param}")
+            # --- MODIFICATION END ---
             response = smart_api_obj.getCandleData(historic_param)
             
             if not (response and response.get("status") and response.get("data")):
@@ -545,11 +548,11 @@ def calculate_and_cache_monthly_highs_streak():
             logger.info(f"Calculated monthly higher-highs streak for token {token}: {streak} Months")
 
         except Exception as e:
-            logger.error(f"Exception calculating monthly streak for token {token}: {e}")
+            # --- MODIFICATION START: Changed to logger.exception for full traceback ---
+            logger.exception(f"Full exception details for token {token}:")
+            # --- MODIFICATION END ---
             new_cache[token] = 0
-        # --- MODIFICATION START: Increased delay to avoid rate limiting ---
         time.sleep(1.1)
-        # --- MODIFICATION END ---
         
     with data_lock:
         monthly_higher_highs_cache = new_cache
