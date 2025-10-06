@@ -1226,10 +1226,12 @@ def calculate_multi_timeframe_higher_highs(daily_candles, token, symbol):
                     day_count += 1
                     logger.info(f"{log_prefix} [DAILY CHECK] PASSED. Count is now {day_count}.")
                 else:
-                    logger.info(f"{log_prefix} [DAILY CHECK] FAILED. Breaking loop.")
+                    diff = lookback_day['high'] - current_day['high']
+                    logger.info(f"{log_prefix} [DAILY CHECK] FAILED. High ({current_day['high']:.2f}) was {diff:.2f} below required High ({lookback_day['high']:.2f}). Breaking loop.")
                     break
         else:
-            logger.info(f"{log_prefix} [DAILY CHECK] FAILED. Daily count is 0.")
+            diff = prev_day['high'] - last_day['close']
+            logger.info(f"{log_prefix} [DAILY CHECK] FAILED. Close ({last_day['close']:.2f}) was {diff:.2f} below required High ({prev_day['high']:.2f}). Daily count is 0.")
 
     # --- Weekly Calculation ---
     week_count = 0
@@ -1268,10 +1270,12 @@ def calculate_multi_timeframe_higher_highs(daily_candles, token, symbol):
                     week_count += 1
                     logger.info(f"{log_prefix} [WEEKLY CHECK] PASSED. Count is now {week_count}.")
                 else:
-                    logger.info(f"{log_prefix} [WEEKLY CHECK] FAILED. Breaking loop.")
+                    diff = lookback_week['high'] - current_week['high']
+                    logger.info(f"{log_prefix} [WEEKLY CHECK] FAILED. High ({current_week['high']:.2f}) was {diff:.2f} below required High ({lookback_week['high']:.2f}). Breaking loop.")
                     break
         else:
-             logger.info(f"{log_prefix} [WEEKLY CHECK] FAILED. Weekly count is 0.")
+            diff = prev_week['high'] - last_week['close']
+            logger.info(f"{log_prefix} [WEEKLY CHECK] FAILED. Close ({last_week['close']:.2f}) was {diff:.2f} below required High ({prev_week['high']:.2f}). Weekly count is 0.")
 
     # --- Monthly Calculation ---
     month_count = 0
@@ -1306,10 +1310,12 @@ def calculate_multi_timeframe_higher_highs(daily_candles, token, symbol):
                     month_count += 1
                     logger.info(f"{log_prefix} [MONTHLY CHECK] PASSED. Count is now {month_count}.")
                 else:
-                    logger.info(f"{log_prefix} [MONTHLY CHECK] FAILED. Breaking loop.")
+                    diff = lookback_month['high'] - current_month['high']
+                    logger.info(f"{log_prefix} [MONTHLY CHECK] FAILED. High ({current_month['high']:.2f}) was {diff:.2f} below required High ({lookback_month['high']:.2f}). Breaking loop.")
                     break
         else:
-            logger.info(f"{log_prefix} [MONTHLY CHECK] FAILED. Monthly count is 0.")
+            diff = prev_month['high'] - last_month['close']
+            logger.info(f"{log_prefix} [MONTHLY CHECK] FAILED. Close ({last_month['close']:.2f}) was {diff:.2f} below required High ({prev_month['high']:.2f}). Monthly count is 0.")
 
     logger.info(f"--- {log_prefix} FINAL COUNTS: Months={month_count}, Weeks={week_count}, Days={day_count} ---")
     return {'months': month_count, 'weeks': week_count, 'days': day_count}
@@ -1714,4 +1720,3 @@ def run_threaded_logic(): # Starts the main application logic in a separate thre
 if __name__ == "__main__": # Main entry point for Flask + Threaded Logic.
     run_threaded_logic()
     app.run(host="0.0.0.0", port=int(os.environ.get("PORT", 8080)))
-
