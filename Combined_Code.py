@@ -1197,7 +1197,7 @@ def run_initial_setup_data_fetch(initial_data_ready_event): # Background thread 
     except Exception as e: logger.exception(f"An error occurred during initial data fetch: {e}")
     finally: initial_data_ready_event.set()
 
-# --- MODIFICATION START: New functions for Higher Highs Month Count indicator with detailed logging ---
+# --- MODIFICATION START: Updated function with stricter chaining logic ---
 def calculate_multi_timeframe_higher_highs(daily_candles, token, symbol):
     log_prefix = f"[HH CALC for {symbol} (Token: {token})]"
     logger.info(f"--- {log_prefix} ---")
@@ -1221,13 +1221,13 @@ def calculate_multi_timeframe_higher_highs(daily_candles, token, symbol):
             for i in range(len(completed_candles) - 2, 0, -1):
                 current_day = completed_candles[i]
                 lookback_day = completed_candles[i-1]
-                logger.info(f"{log_prefix} [DAILY CHECK] Chained: Is {current_day['start_time'].date()} High ({current_day['high']:.2f}) > {lookback_day['start_time'].date()} High ({lookback_day['high']:.2f})?")
-                if current_day['high'] > lookback_day['high']:
+                logger.info(f"{log_prefix} [DAILY CHECK] Chained: Is {current_day['start_time'].date()} Close ({current_day['close']:.2f}) > {lookback_day['start_time'].date()} High ({lookback_day['high']:.2f})?")
+                if current_day['close'] > lookback_day['high']:
                     day_count += 1
                     logger.info(f"{log_prefix} [DAILY CHECK] PASSED. Count is now {day_count}.")
                 else:
-                    diff = lookback_day['high'] - current_day['high']
-                    logger.info(f"{log_prefix} [DAILY CHECK] FAILED. High ({current_day['high']:.2f}) was {diff:.2f} below required High ({lookback_day['high']:.2f}). Breaking loop.")
+                    diff = lookback_day['high'] - current_day['close']
+                    logger.info(f"{log_prefix} [DAILY CHECK] FAILED. Close ({current_day['close']:.2f}) was {diff:.2f} below required High ({lookback_day['high']:.2f}). Breaking loop.")
                     break
         else:
             diff = prev_day['high'] - last_day['close']
@@ -1265,13 +1265,13 @@ def calculate_multi_timeframe_higher_highs(daily_candles, token, symbol):
             for i in range(len(sorted_weeks) - 2, 0, -1):
                 current_week = sorted_weeks[i]
                 lookback_week = sorted_weeks[i-1]
-                logger.info(f"{log_prefix} [WEEKLY CHECK] Chained: Is Week {current_week['week_num']} High ({current_week['high']:.2f}) > Week {lookback_week['week_num']} High ({lookback_week['high']:.2f})?")
-                if current_week['high'] > lookback_week['high']:
+                logger.info(f"{log_prefix} [WEEKLY CHECK] Chained: Is Week {current_week['week_num']} Close ({current_week['close']:.2f}) > Week {lookback_week['week_num']} High ({lookback_week['high']:.2f})?")
+                if current_week['close'] > lookback_week['high']:
                     week_count += 1
                     logger.info(f"{log_prefix} [WEEKLY CHECK] PASSED. Count is now {week_count}.")
                 else:
-                    diff = lookback_week['high'] - current_week['high']
-                    logger.info(f"{log_prefix} [WEEKLY CHECK] FAILED. High ({current_week['high']:.2f}) was {diff:.2f} below required High ({lookback_week['high']:.2f}). Breaking loop.")
+                    diff = lookback_week['high'] - current_week['close']
+                    logger.info(f"{log_prefix} [WEEKLY CHECK] FAILED. Close ({current_week['close']:.2f}) was {diff:.2f} below required High ({lookback_week['high']:.2f}). Breaking loop.")
                     break
         else:
             diff = prev_week['high'] - last_week['close']
@@ -1305,13 +1305,13 @@ def calculate_multi_timeframe_higher_highs(daily_candles, token, symbol):
             for i in range(len(sorted_months) - 2, 0, -1):
                 current_month = sorted_months[i]
                 lookback_month = sorted_months[i-1]
-                logger.info(f"{log_prefix} [MONTHLY CHECK] Chained: Is Month {current_month['month_key']} High ({current_month['high']:.2f}) > Month {lookback_month['month_key']} High ({lookback_month['high']:.2f})?")
-                if current_month['high'] > lookback_month['high']:
+                logger.info(f"{log_prefix} [MONTHLY CHECK] Chained: Is Month {current_month['month_key']} Close ({current_month['close']:.2f}) > Month {lookback_month['month_key']} High ({lookback_month['high']:.2f})?")
+                if current_month['close'] > lookback_month['high']:
                     month_count += 1
                     logger.info(f"{log_prefix} [MONTHLY CHECK] PASSED. Count is now {month_count}.")
                 else:
-                    diff = lookback_month['high'] - current_month['high']
-                    logger.info(f"{log_prefix} [MONTHLY CHECK] FAILED. High ({current_month['high']:.2f}) was {diff:.2f} below required High ({lookback_month['high']:.2f}). Breaking loop.")
+                    diff = lookback_month['high'] - current_month['close']
+                    logger.info(f"{log_prefix} [MONTHLY CHECK] FAILED. Close ({current_month['close']:.2f}) was {diff:.2f} below required High ({lookback_month['high']:.2f}). Breaking loop.")
                     break
         else:
             diff = prev_month['high'] - last_month['close']
@@ -1720,3 +1720,4 @@ def run_threaded_logic(): # Starts the main application logic in a separate thre
 if __name__ == "__main__": # Main entry point for Flask + Threaded Logic.
     run_threaded_logic()
     app.run(host="0.0.0.0", port=int(os.environ.get("PORT", 8080)))
+
