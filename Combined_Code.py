@@ -877,10 +877,12 @@ def get_or_fetch_instrument_details(symbol_name, exchange_name, session_cache): 
     if instrument_details: session_cache[cache_key] = instrument_details
     else: logger.warning(f"Could not find details for '{symbol_from_sheet}' on exchange '{exchange_clean}' in the master instrument list.")
     return instrument_details
+# --- MODIFICATION START: Updated scan_sheet_for_all_symbols to trigger on-demand calculation ---
 def scan_sheet_for_all_symbols(Dashboard, ATHCache): # Unified function to scan the Google Sheet and manage the ATH Cache.
     logger.info("Scanning Google Sheet for all symbols (Dashboard and Setups)...")
     local_dashboard_details, local_orh_setup_details, local_3pct_setup_details = collections.defaultdict(list), collections.defaultdict(list), collections.defaultdict(list)
     all_tokens_found, scan_session_token_cache, expected_ath_cache_state, ath_cache_updates_queued = set(), {}, {}, []
+    newly_added_position_stocks = [] # New list to hold stocks for on-demand calculation
     try:
         all_dashboard_values, all_ath_cache_values = Dashboard.get_all_values(), ATHCache.get_all_values()
         last_row_focus = get_last_row_in_column(Dashboard, FOCUS_SYMBOL_COL)
@@ -892,7 +894,8 @@ def scan_sheet_for_all_symbols(Dashboard, ATHCache): # Unified function to scan 
                 symbol_clean, symbol_col = str(symbol).strip().upper(), block_details.get('symbol_col')
                 if not symbol or not exchange or symbol_clean == 'SYMBOL': return
                 cache_key = (row_num, symbol_col)
-                if scan_memory_cache.get(cache_key) != symbol_clean:
+                previous_symbol_in_cell = scan_memory_cache.get(cache_key)
+                if previous_symbol_in_cell != symbol_clean:
                     logger.info(f"New or changed symbol '{symbol_clean}' found at {cache_key}. Fetching new details.")
                     scan_memory_cache[cache_key] = symbol_clean
                 instrument_info = get_or_fetch_instrument_details(symbol, exchange, scan_session_token_cache)
@@ -900,6 +903,11 @@ def scan_sheet_for_all_symbols(Dashboard, ATHCache): # Unified function to scan 
                     token = instrument_info['token']
                     all_tokens_found.add(token)
                     block_details['name'] = instrument_info.get('name')
+                    # On-demand HH calc trigger logic
+                    is_position_block = block_details.get('block_type') in ["Full Positions", "Half Positions", "Quarter Positions"]
+                    if is_position_block and (not previous_symbol_in_cell) and symbol_clean:
+                        logger.info(f"Detected NEW position stock '{symbol_clean}' at row {row_num}. Queuing for on-demand HH calculation.")
+                        newly_added_position_stocks.append({'token': token, 'symbol': symbol, 'exchange': exchange.strip().upper()})
                     if 'ltp_col' in block_details: local_dashboard_details[token].append({'row': row_num, 'symbol': symbol, 'exchange': exchange, **block_details})
                     if 'setup_type' in block_details:
                         exchange_type_int = {'NSE': 1, 'NFO': 2, 'BSE': 3}.get(str(exchange).strip().upper())
@@ -920,9 +928,10 @@ def scan_sheet_for_all_symbols(Dashboard, ATHCache): # Unified function to scan 
             if is_a_position_row:
                 exchange_pos, symbol_pos = get_cell_value(all_dashboard_values, row, FULL_EXCHANGE_COL), get_cell_value(all_dashboard_values, row, FULL_SYMBOL_COL)
                 if exchange_pos and symbol_pos:
-                    # Process for live data dashboard
-                    process_symbol(symbol_pos, exchange_pos, row, ATH_CACHE_Z_COL_DASH, {'ltp_col': FULL_LTP_COL, 'chg_col': '', 'block_type': 'Full Positions', 'symbol_col': FULL_SYMBOL_COL, 'token_cache_col': ATH_CACHE_Z_COL_DASH, 'price_col': FULL_PRICE_COL, 'qty_col': FULL_QTY_COL, 'return_amt_col': FULL_RETURN_AMT_COL, 'return_pct_col': FULL_RETURN_PCT_COL, 'swing_low_input_col': SWING_LOW_INPUT_COL, 'percent_from_swing_low_col': PERCENT_FROM_SWING_LOW_COL, 'highest_up_candle_col': HIGHEST_UP_CANDLE_COL, 'entry_date_col': FULL_ENTRY_DATE_COL, 'days_duration_col': FULL_DAYS_DURATION_COL})
-                    # Process for 3% down setup logic
+                    block_type_str = "Full Positions"
+                    if is_half_pos_row: block_type_str = "Half Positions"
+                    elif is_quarter_pos_row: block_type_str = "Quarter Positions"
+                    process_symbol(symbol_pos, exchange_pos, row, ATH_CACHE_Z_COL_DASH, {'ltp_col': FULL_LTP_COL, 'chg_col': '', 'block_type': block_type_str, 'symbol_col': FULL_SYMBOL_COL, 'token_cache_col': ATH_CACHE_Z_COL_DASH, 'price_col': FULL_PRICE_COL, 'qty_col': FULL_QTY_COL, 'return_amt_col': FULL_RETURN_AMT_COL, 'return_pct_col': FULL_RETURN_PCT_COL, 'swing_low_input_col': SWING_LOW_INPUT_COL, 'percent_from_swing_low_col': PERCENT_FROM_SWING_LOW_COL, 'highest_up_candle_col': HIGHEST_UP_CANDLE_COL, 'entry_date_col': FULL_ENTRY_DATE_COL, 'days_duration_col': FULL_DAYS_DURATION_COL})
                     process_symbol(symbol_pos, exchange_pos, row, PCT_TOKEN_COL_3PCT, {'setup_type': '3PCT', 'symbol_col': PCT_SYMBOL_COL_3PCT})
             
             exchange_setup, symbol_setup = get_cell_value(all_dashboard_values, row, SETUP_EXCHANGE_COL), get_cell_value(all_dashboard_values, row, SETUP_SYMBOL_COL)
@@ -949,8 +958,11 @@ def scan_sheet_for_all_symbols(Dashboard, ATHCache): # Unified function to scan 
             except Exception as e: logger.exception(f"An error occurred during batch update to ATH Cache sheet: {e}")
         else: logger.info("No ATH Cache updates needed.")
     except Exception as e: logger.exception(f"Error during unified symbol scan and ATH Cache management: {e}")
+    if newly_added_position_stocks:
+        threading.Thread(target=run_on_demand_hh_calculation, args=(newly_added_position_stocks,), daemon=True).start()
     logger.info(f"Finished unified scan. Found {len(all_tokens_found)} unique tokens.")
     return local_dashboard_details, local_orh_setup_details, local_3pct_setup_details, all_tokens_found
+# --- MODIFICATION END ---
 def update_excel_live_data(): # Updates the Google Sheet with live data and Swing Low calculation.
     global cells_to_clear_color
     with data_lock:
@@ -1000,7 +1012,7 @@ def update_excel_live_data(): # Updates the Google Sheet with live data and Swin
             symbol_on_sheet = str(symbol_on_sheet_raw).strip().upper() if symbol_on_sheet_raw else ""
             if not symbol_on_sheet:
                 if details.get('block_type') == "Focus List": start_col, end_col = 'D', 'J'
-                elif details.get('block_type') == "Full Positions": start_col, end_col = 'N', 'AI'
+                elif details.get('block_type') in ["Full Positions", "Half Positions", "Quarter Positions"]: start_col, end_col = 'N', 'AI'
                 else: continue
                 logger.info(f"Detected cleared symbol at row {row_num}. Queuing fast clear for {start_col}{row_num}:{end_col}{row_num}.")
                 requests.append({"repeatCell": {"range": {"sheetId": dashboard_sheet_id, "startRowIndex": row_num - 1, "endRowIndex": row_num, "startColumnIndex": col_to_num(start_col) - 1, "endColumnIndex": col_to_num(end_col)}, "cell": {"userEnteredValue": {}, "userEnteredFormat": {"backgroundColor": rgb_to_float(None)}}, "fields": "userEnteredValue,userEnteredFormat.backgroundColor"}})
@@ -1029,7 +1041,7 @@ def update_excel_live_data(): # Updates the Google Sheet with live data and Swin
                 percentage_change_decimal = percentage_change / 100.0 if percentage_change is not None else 0.0
                 chg_cell_color = GREEN_COLOR if percentage_change > 0 else RED_COLOR if percentage_change < 0 else None
                 queue_update(details['chg_col'], percentage_change_decimal, "0.00%", bg_color=chg_cell_color)
-            if details.get('block_type') == "Full Positions":
+            if details.get('block_type') in ["Full Positions", "Half Positions", "Quarter Positions"]:
                 try:
                     price_val_str, qty_val_str = str(input_data.get(f'{details["price_col"]}{row_num}') or '0').replace(',',''), str(input_data.get(f'{details["qty_col"]}{row_num}') or '0').replace(',','')
                     entry_date_str = input_data.get(f'{details["entry_date_col"]}{row_num}')
@@ -1054,10 +1066,8 @@ def update_excel_live_data(): # Updates the Google Sheet with live data and Swin
                         queue_update(details.get('percent_from_swing_low_col'), percent_from_high, "0.00%", bg_color=cell_color)
                     else: queue_update(details.get('percent_from_swing_low_col'), "No High", "@", bg_color=None)
                 else: queue_update(details.get('percent_from_swing_low_col'), "", "General", bg_color=None)
-                # --- MODIFICATION START: Update to handle new string format from cache ---
                 display_text = higher_high_month_count_cache.get(token, "Calculating...")
                 queue_update(MONTH_SORT_COL, display_text, "@", bg_color=None)
-                # --- MODIFICATION END ---
                 days_duration = ""
                 if entry_date_str:
                     try:
@@ -1197,7 +1207,35 @@ def run_initial_setup_data_fetch(initial_data_ready_event): # Background thread 
     except Exception as e: logger.exception(f"An error occurred during initial data fetch: {e}")
     finally: initial_data_ready_event.set()
 
-# --- MODIFICATION START: Updated function with stricter chaining logic ---
+# --- MODIFICATION START: Functions for Higher Highs calculation ---
+def run_on_demand_hh_calculation(stocks_to_calculate):
+    """Calculates Higher Highs for a specific list of newly added stocks."""
+    logger.info(f"Triggering on-demand Higher Highs calculation for {len(stocks_to_calculate)} new stock(s)...")
+    today = get_ist_time()
+    from_date = (today - relativedelta(years=1)).strftime("%Y-%m-%d %H:%M")
+    to_date = today.strftime("%Y-%m-%d %H:%M")
+    for stock_info in stocks_to_calculate:
+        token, symbol, exchange = stock_info['token'], stock_info['symbol'], stock_info['exchange']
+        try:
+            historic_param = {"exchange": exchange, "symboltoken": str(token), "interval": "ONE_DAY", "fromdate": from_date, "todate": to_date}
+            response = smart_api_obj.getCandleData(historic_param)
+            if response and response.get("status") and response.get("data"):
+                daily_candles = [{'start_time': datetime.datetime.fromisoformat(c[0]), 'open': c[1], 'high': c[2], 'low': c[3], 'close': c[4]} for c in response["data"]]
+                counts = calculate_multi_timeframe_higher_highs(daily_candles, token, symbol)
+                parts = []
+                if counts['months'] > 0: parts.append(f"{counts['months']}Month" + ("s" if counts['months'] != 1 else ""))
+                if counts['weeks'] > 0: parts.append(f"{counts['weeks']}Week" + ("s" if counts['weeks'] != 1 else ""))
+                if counts['days'] > 0: parts.append(f"{counts['days']}day" + ("s" if counts['days'] != 1 else ""))
+                display_text = ", ".join(parts) if parts else "0"
+                with data_lock:
+                    higher_high_month_count_cache[token] = display_text
+                logger.info(f"On-demand HH calc complete for {symbol}. Result: {display_text}")
+            else:
+                logger.warning(f"Could not fetch daily history for on-demand HH calc for {symbol}. Message: {response.get('message', 'Unknown error')}")
+        except Exception as e:
+            logger.error(f"Exception in on-demand HH calc for {symbol}: {e}")
+        time.sleep(0.5)
+
 def calculate_multi_timeframe_higher_highs(daily_candles, token, symbol):
     log_prefix = f"[HH CALC for {symbol} (Token: {token})]"
     logger.info(f"--- {log_prefix} ---")
@@ -1331,47 +1369,13 @@ def run_multi_timeframe_higher_high_calculator():
             tokens_to_check = set()
             for token, details_list in dashboard_details_copy.items():
                 for details in details_list:
-                    if details.get('block_type') == 'Full Positions':
+                    if details.get('block_type') in ["Full Positions", "Half Positions", "Quarter Positions"]:
                         tokens_to_check.add((token, details.get("symbol"), details.get("exchange", "NSE").upper()))
                         break
-
-            if not tokens_to_check:
-                time.sleep(3600); continue
-            
-            today = get_ist_time()
-            from_date = (today - relativedelta(years=1)).strftime("%Y-%m-%d %H:%M")
-            to_date = today.strftime("%Y-%m-%d %H:%M")
-
-            for token, symbol, exchange in list(tokens_to_check):
-                try:
-                    historic_param = {"exchange": exchange, "symboltoken": str(token), "interval": "ONE_DAY", "fromdate": from_date, "todate": to_date}
-                    response = smart_api_obj.getCandleData(historic_param)
-                    
-                    if response and response.get("status") and response.get("data"):
-                        daily_candles = [{'start_time': datetime.datetime.fromisoformat(c[0]), 'open': c[1], 'high': c[2], 'low': c[3], 'close': c[4]} for c in response["data"]]
-                        counts = calculate_multi_timeframe_higher_highs(daily_candles, token, symbol)
-                        
-                        parts = []
-                        if counts['months'] > 0:
-                            parts.append(f"{counts['months']}Month" + ("s" if counts['months'] != 1 else ""))
-                        if counts['weeks'] > 0:
-                            parts.append(f"{counts['weeks']}Week" + ("s" if counts['weeks'] != 1 else ""))
-                        if counts['days'] > 0:
-                            parts.append(f"{counts['days']}day" + ("s" if counts['days'] != 1 else ""))
-                        
-                        display_text = ", ".join(parts) if parts else "0"
-                        
-                        with data_lock:
-                            higher_high_month_count_cache[token] = display_text
-                    else:
-                        logger.warning(f"Could not fetch daily history for {symbol} (Token: {token}) for HH calc. Message: {response.get('message', 'Unknown error')}")
-                except Exception as e:
-                    logger.error(f"Exception calculating HH for {symbol} (Token: {token}): {e}")
-                time.sleep(0.5)
-
+            if tokens_to_check:
+                run_on_demand_hh_calculation(list(tokens_to_check))
             logger.info("Finished periodic check for Multi-Timeframe Higher Highs. Sleeping for 4 hours.")
             time.sleep(4 * 60 * 60)
-
         except Exception as e:
             logger.exception(f"Error in Higher Highs calculator thread: {e}")
             time.sleep(300)
@@ -1710,9 +1714,7 @@ def start_main_application(): # Primary function to initialize connections and r
     threading.Thread(target=run_quote_updater, daemon=True).start()
     threading.Thread(target=run_initial_setup_data_fetch, args=(initial_data_ready,), daemon=True).start()
     threading.Thread(target=run_background_task_scheduler, args=(initial_data_ready,), daemon=True).start()
-    # --- MODIFICATION START: Renamed function for clarity and correctness ---
     threading.Thread(target=run_multi_timeframe_higher_high_calculator, daemon=True).start()
-    # --- MODIFICATION END ---
     logger.info("All systems are go! The application is now running.")
 def run_threaded_logic(): # Starts the main application logic in a separate thread.
     thread = threading.Thread(target=start_main_application, daemon=True)
