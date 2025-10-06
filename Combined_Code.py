@@ -77,6 +77,9 @@ previous_ah_column_state = {}
 previous_breakdown_state = {}
 subscribed_tokens = set() # For Subscription Management
 scan_memory_cache = {} # In-memory cache to prevent repetitive logging
+# --- MODIFICATION START: Added global flag ---
+initial_scan_complete = False
+# --- MODIFICATION END ---
 FULL_POSITIONS_ROWS = (5, 33)
 HALF_POSITIONS_ROWS = (37, 48)
 QUARTER_POSITIONS_ROWS = (52, 62)
@@ -905,7 +908,7 @@ def scan_sheet_for_all_symbols(Dashboard, ATHCache): # Unified function to scan 
                     block_details['name'] = instrument_info.get('name')
                     # On-demand HH calc trigger logic
                     is_position_block = block_details.get('block_type') in ["Full Positions", "Half Positions", "Quarter Positions"]
-                    if is_position_block and (not previous_symbol_in_cell) and symbol_clean:
+                    if is_position_block and (not previous_symbol_in_cell) and symbol_clean and initial_scan_complete:
                         logger.info(f"Detected NEW position stock '{symbol_clean}' at row {row_num}. Queuing for on-demand HH calculation.")
                         newly_added_position_stocks.append({'token': token, 'symbol': symbol, 'exchange': exchange.strip().upper()})
                     if 'ltp_col' in block_details: local_dashboard_details[token].append({'row': row_num, 'symbol': symbol, 'exchange': exchange, **block_details})
@@ -984,7 +987,7 @@ def update_excel_live_data(): # Updates the Google Sheet with live data and Swin
         for details in list_of_details:
             row_num = details['row']
             if details.get("symbol_col"): input_ranges.append(f'{details["symbol_col"]}{row_num}')
-            if details.get('block_type') == "Full Positions":
+            if details.get('block_type') in ["Full Positions", "Half Positions", "Quarter Positions"]:
                 if details.get("price_col"): input_ranges.append(f'{details["price_col"]}{row_num}')
                 if details.get("qty_col"): input_ranges.append(f'{details["qty_col"]}{row_num}')
                 if details.get("entry_date_col"): input_ranges.append(f'{details["entry_date_col"]}{row_num}')
@@ -1366,14 +1369,17 @@ def run_multi_timeframe_higher_high_calculator():
             with data_lock:
                 dashboard_details_copy = excel_dashboard_details.copy()
             
-            tokens_to_check = set()
+            tokens_to_check = []
+            unique_tokens = set()
             for token, details_list in dashboard_details_copy.items():
-                for details in details_list:
-                    if details.get('block_type') in ["Full Positions", "Half Positions", "Quarter Positions"]:
-                        tokens_to_check.add((token, details.get("symbol"), details.get("exchange", "NSE").upper()))
-                        break
+                if token not in unique_tokens:
+                    for details in details_list:
+                        if details.get('block_type') in ["Full Positions", "Half Positions", "Quarter Positions"]:
+                            tokens_to_check.append({'token': token, 'symbol': details.get("symbol"), 'exchange': details.get("exchange", "NSE").upper()})
+                            unique_tokens.add(token)
+                            break
             if tokens_to_check:
-                run_on_demand_hh_calculation(list(tokens_to_check))
+                run_on_demand_hh_calculation(tokens_to_check)
             logger.info("Finished periodic check for Multi-Timeframe Higher Highs. Sleeping for 4 hours.")
             time.sleep(4 * 60 * 60)
         except Exception as e:
@@ -1641,7 +1647,7 @@ def run_daily_ath_cache_update(): # Runs an initial update on startup, then sche
 
 # --- Application Start ---
 def start_main_application(): # Primary function to initialize connections and run main processing loops.
-    global smart_api_obj, smart_ws, gsheet, Dashboard, ATHCache, OrdersSheet, subscribed_tokens, excel_dashboard_details, excel_orh_setup_details, excel_3pct_setup_details, instrument_master_list, auth_token, feed_token, websocket_thread, last_login_date
+    global smart_api_obj, smart_ws, gsheet, Dashboard, ATHCache, OrdersSheet, subscribed_tokens, excel_dashboard_details, excel_orh_setup_details, excel_3pct_setup_details, instrument_master_list, auth_token, feed_token, websocket_thread, last_login_date, initial_scan_complete
     logger.info("Starting Combined Trading Dashboard and Signal Generator...")
     try:
         logger.info(f"Performing initial download of master instrument list from {INSTRUMENT_LIST_URL}...")
@@ -1678,6 +1684,10 @@ def start_main_application(): # Primary function to initialize connections and r
     logger.info("Performing initial symbol scan...")
     new_dashboard, new_orh, new_3pct, all_tokens_for_subscription = scan_sheet_for_all_symbols(Dashboard, ATHCache)
     excel_dashboard_details, excel_orh_setup_details, excel_3pct_setup_details = new_dashboard, new_orh, new_3pct
+    # --- MODIFICATION START: Set flag after initial scan ---
+    initial_scan_complete = True
+    logger.info("Initial scan complete. On-demand HH calculations are now active.")
+    # --- MODIFICATION END ---
     logger.info("Performing initial one-time fetch for monthly highs and portfolio sort...")
     unique_tokens_3pct_startup = list(set([(token, details[0]['exchange_type']) for token, details in excel_3pct_setup_details.items() if details]))
     if unique_tokens_3pct_startup: fetch_monthly_highs(smart_api_obj, unique_tokens_3pct_startup)
