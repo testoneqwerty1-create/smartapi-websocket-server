@@ -1,7 +1,6 @@
 # Combined Trading Dashboard and Signal Generator (Concurrent, Threaded Version)
 import os, sys, json, time, struct, ssl, logging, threading, collections, datetime, re
 from datetime import timedelta
-from dateutil.relativedelta import relativedelta
 from zoneinfo import ZoneInfo
 from flask import Flask
 import gspread, pyotp, websocket, requests, yfinance as yf, logzero
@@ -69,7 +68,6 @@ volume_history_3pct = collections.defaultdict(lambda: collections.defaultdict(li
 support_candle_details = {} # NEW: Cache for storing precise support candle date and time.
 previous_day_high_cache = {}
 monthly_high_cache = {}
-higher_high_month_count_cache = {}
 orh_triggered_today = set() # State Tracking: Stores tokens that have already triggered to prevent re-checking
 previous_j_column_state = {}
 sell_triggered_today = set()
@@ -77,9 +75,7 @@ previous_ah_column_state = {}
 previous_breakdown_state = {}
 subscribed_tokens = set() # For Subscription Management
 scan_memory_cache = {} # In-memory cache to prevent repetitive logging
-# --- MODIFICATION START: Added global flag ---
 initial_scan_complete = False
-# --- MODIFICATION END ---
 FULL_POSITIONS_ROWS = (5, 33)
 HALF_POSITIONS_ROWS = (37, 48)
 QUARTER_POSITIONS_ROWS = (52, 62)
@@ -97,7 +93,7 @@ QUOTE_API_MAX_TOKENS = 50
 FOCUS_EXCHANGE_COL, FOCUS_SYMBOL_COL, FOCUS_LTP_COL, FOCUS_CHG_COL = 'B', 'C', 'D', 'E'
 ATH_CACHE_Y_COL_DASH, ATH_CACHE_Z_COL_DASH = 'AM', 'AN'
 FULL_EXCHANGE_COL, FULL_SYMBOL_COL, FULL_QTY_COL, FULL_PRICE_COL, FULL_LTP_COL, FULL_RETURN_AMT_COL, FULL_RETURN_PCT_COL = 'L', 'M', 'N', 'O', 'P', 'Q', 'R'
-FULL_ENTRY_DATE_COL, FULL_DAYS_DURATION_COL, MONTH_SORT_COL, SWING_LOW_INPUT_COL, PERCENT_FROM_SWING_LOW_COL = 'S', 'T', 'V', 'W', 'X'
+FULL_ENTRY_DATE_COL, FULL_DAYS_DURATION_COL, SWING_LOW_INPUT_COL, PERCENT_FROM_SWING_LOW_COL = 'S', 'T', 'W', 'X'
 TRAILING_STOP_INPUT_COL, TRAILING_STOP_STATUS_COL = 'Y', 'AA'
 HIGHEST_UP_CANDLE_COL, HIGHEST_UP_CANDLE_STATUS_COL = 'AB', 'AC'
 HIGH_VOL_RESULT_COL, HIGH_VOL_STATUS_COL = 'AD', 'AE'
@@ -880,12 +876,10 @@ def get_or_fetch_instrument_details(symbol_name, exchange_name, session_cache): 
     if instrument_details: session_cache[cache_key] = instrument_details
     else: logger.warning(f"Could not find details for '{symbol_from_sheet}' on exchange '{exchange_clean}' in the master instrument list.")
     return instrument_details
-# --- MODIFICATION START: Updated scan_sheet_for_all_symbols to trigger on-demand calculation ---
 def scan_sheet_for_all_symbols(Dashboard, ATHCache): # Unified function to scan the Google Sheet and manage the ATH Cache.
     logger.info("Scanning Google Sheet for all symbols (Dashboard and Setups)...")
     local_dashboard_details, local_orh_setup_details, local_3pct_setup_details = collections.defaultdict(list), collections.defaultdict(list), collections.defaultdict(list)
     all_tokens_found, scan_session_token_cache, expected_ath_cache_state, ath_cache_updates_queued = set(), {}, {}, []
-    newly_added_position_stocks = [] # New list to hold stocks for on-demand calculation
     try:
         all_dashboard_values, all_ath_cache_values = Dashboard.get_all_values(), ATHCache.get_all_values()
         last_row_focus = get_last_row_in_column(Dashboard, FOCUS_SYMBOL_COL)
@@ -906,11 +900,6 @@ def scan_sheet_for_all_symbols(Dashboard, ATHCache): # Unified function to scan 
                     token = instrument_info['token']
                     all_tokens_found.add(token)
                     block_details['name'] = instrument_info.get('name')
-                    # On-demand HH calc trigger logic
-                    is_position_block = block_details.get('block_type') in ["Full Positions", "Half Positions", "Quarter Positions"]
-                    if is_position_block and (not previous_symbol_in_cell) and symbol_clean and initial_scan_complete:
-                        logger.info(f"Detected NEW position stock '{symbol_clean}' at row {row_num}. Queuing for on-demand HH calculation.")
-                        newly_added_position_stocks.append({'token': token, 'symbol': symbol, 'exchange': exchange.strip().upper()})
                     if 'ltp_col' in block_details: local_dashboard_details[token].append({'row': row_num, 'symbol': symbol, 'exchange': exchange, **block_details})
                     if 'setup_type' in block_details:
                         exchange_type_int = {'NSE': 1, 'NFO': 2, 'BSE': 3}.get(str(exchange).strip().upper())
@@ -961,11 +950,8 @@ def scan_sheet_for_all_symbols(Dashboard, ATHCache): # Unified function to scan 
             except Exception as e: logger.exception(f"An error occurred during batch update to ATH Cache sheet: {e}")
         else: logger.info("No ATH Cache updates needed.")
     except Exception as e: logger.exception(f"Error during unified symbol scan and ATH Cache management: {e}")
-    if newly_added_position_stocks:
-        threading.Thread(target=run_on_demand_hh_calculation, args=(newly_added_position_stocks,), daemon=True).start()
     logger.info(f"Finished unified scan. Found {len(all_tokens_found)} unique tokens.")
     return local_dashboard_details, local_orh_setup_details, local_3pct_setup_details, all_tokens_found
-# --- MODIFICATION END ---
 def update_excel_live_data(): # Updates the Google Sheet with live data and Swing Low calculation.
     global cells_to_clear_color
     with data_lock:
@@ -1069,8 +1055,6 @@ def update_excel_live_data(): # Updates the Google Sheet with live data and Swin
                         queue_update(details.get('percent_from_swing_low_col'), percent_from_high, "0.00%", bg_color=cell_color)
                     else: queue_update(details.get('percent_from_swing_low_col'), "No High", "@", bg_color=None)
                 else: queue_update(details.get('percent_from_swing_low_col'), "", "General", bg_color=None)
-                display_text = higher_high_month_count_cache.get(token, "Calculating...")
-                queue_update(MONTH_SORT_COL, display_text, "@", bg_color=None)
                 days_duration = ""
                 if entry_date_str:
                     try:
@@ -1210,281 +1194,13 @@ def run_initial_setup_data_fetch(initial_data_ready_event): # Background thread 
     except Exception as e: logger.exception(f"An error occurred during initial data fetch: {e}")
     finally: initial_data_ready_event.set()
 
-# --- MODIFICATION START: Functions for Higher Highs calculation ---
-def run_on_demand_hh_calculation(stocks_to_calculate):
-    """Calculates Higher Highs for a specific list of newly added stocks."""
-    logger.info(f"Triggering on-demand Higher Highs calculation for {len(stocks_to_calculate)} new stock(s)...")
-    today = get_ist_time()
-    from_date = (today - relativedelta(years=1)).strftime("%Y-%m-%d %H:%M")
-    to_date = today.strftime("%Y-%m-%d %H:%M")
-    for stock_info in stocks_to_calculate:
-        token, symbol, exchange = stock_info['token'], stock_info['symbol'], stock_info['exchange']
-        try:
-            historic_param = {"exchange": exchange, "symboltoken": str(token), "interval": "ONE_DAY", "fromdate": from_date, "todate": to_date}
-            response = smart_api_obj.getCandleData(historic_param)
-            if response and response.get("status") and response.get("data"):
-                daily_candles = [{'start_time': datetime.datetime.fromisoformat(c[0]), 'open': c[1], 'high': c[2], 'low': c[3], 'close': c[4]} for c in response["data"]]
-                counts = calculate_multi_timeframe_higher_highs(daily_candles, token, symbol)
-                parts = []
-                if counts['months'] > 0: parts.append(f"{counts['months']}Month" + ("s" if counts['months'] != 1 else ""))
-                if counts['weeks'] > 0: parts.append(f"{counts['weeks']}Week" + ("s" if counts['weeks'] != 1 else ""))
-                if counts['days'] > 0: parts.append(f"{counts['days']}day" + ("s" if counts['days'] != 1 else ""))
-                display_text = ", ".join(parts) if parts else "0"
-                with data_lock:
-                    higher_high_month_count_cache[token] = display_text
-                logger.info(f"On-demand HH calc complete for {symbol}. Result: {display_text}")
-            else:
-                logger.warning(f"Could not fetch daily history for on-demand HH calc for {symbol}. Message: {response.get('message', 'Unknown error')}")
-        except Exception as e:
-            logger.error(f"Exception in on-demand HH calc for {symbol}: {e}")
-        time.sleep(0.5)
-
-def calculate_multi_timeframe_higher_highs(daily_candles, token, symbol):
-    log_prefix = f"[HH CALC for {symbol} (Token: {token})]"
-    logger.info(f"--- {log_prefix} ---")
-    
-    today = get_ist_time().date()
-    completed_candles = [c for c in daily_candles if c['start_time'].date() < today]
-
-    if not completed_candles:
-        logger.info(f"{log_prefix} No completed daily candles available. Returning all zeros.")
-        return {'months': 0, 'weeks': 0, 'days': 0}
-
-    # --- Daily Calculation ---
-    day_count = 0
-    if len(completed_candles) >= 2:
-        last_day = completed_candles[-1]
-        prev_day = completed_candles[-2]
-        logger.info(f"{log_prefix} [DAILY CHECK] Initial: Is {last_day['start_time'].date()} Close ({last_day['close']:.2f}) > {prev_day['start_time'].date()} High ({prev_day['high']:.2f})?")
-        if last_day['close'] > prev_day['high']:
-            logger.info(f"{log_prefix} [DAILY CHECK] PASSED. Initial count is 1.")
-            day_count = 1
-            for i in range(len(completed_candles) - 2, 0, -1):
-                current_day = completed_candles[i]
-                lookback_day = completed_candles[i-1]
-                logger.info(f"{log_prefix} [DAILY CHECK] Chained: Is {current_day['start_time'].date()} Close ({current_day['close']:.2f}) > {lookback_day['start_time'].date()} High ({lookback_day['high']:.2f})?")
-                if current_day['close'] > lookback_day['high']:
-                    day_count += 1
-                    logger.info(f"{log_prefix} [DAILY CHECK] PASSED. Count is now {day_count}.")
-                else:
-                    diff = lookback_day['high'] - current_day['close']
-                    logger.info(f"{log_prefix} [DAILY CHECK] FAILED. Close ({current_day['close']:.2f}) was {diff:.2f} below required High ({lookback_day['high']:.2f}). Breaking loop.")
-                    break
-        else:
-            diff = prev_day['high'] - last_day['close']
-            logger.info(f"{log_prefix} [DAILY CHECK] FAILED. Close ({last_day['close']:.2f}) was {diff:.2f} below required High ({prev_day['high']:.2f}). Daily count is 0.")
-
-    # --- Weekly Calculation ---
-    week_count = 0
-    weekly_data = collections.defaultdict(lambda: {'high': 0, 'close': None, 'date': None, 'week_num': '', 'start_date': None, 'end_date': None})
-    for candle in completed_candles:
-        candle_date = candle['start_time'].date()
-        week_key = candle_date.strftime('%Y-%W')
-        
-        if weekly_data[week_key]['start_date'] is None: weekly_data[week_key]['start_date'] = candle_date
-        weekly_data[week_key]['end_date'] = candle_date
-        
-        weekly_data[week_key]['high'] = max(weekly_data[week_key]['high'], candle['high'])
-        if weekly_data[week_key]['date'] is None or candle_date > weekly_data[week_key]['date']:
-            weekly_data[week_key]['close'] = candle['close']
-            weekly_data[week_key]['date'] = candle_date
-            weekly_data[week_key]['week_num'] = week_key
-
-    current_week_key = today.strftime('%Y-%W')
-    if current_week_key in weekly_data:
-        logger.info(f"{log_prefix} Discarding incomplete week {current_week_key} for weekly calculation.")
-        del weekly_data[current_week_key]
-
-    sorted_weeks = sorted(weekly_data.values(), key=lambda item: item['date'])
-    if len(sorted_weeks) >= 2:
-        last_week = sorted_weeks[-1]
-        prev_week = sorted_weeks[-2]
-        logger.info(f"{log_prefix} [WEEKLY CHECK] Initial: Is Week {last_week['week_num']} ({last_week['start_date']} to {last_week['end_date']}) Close ({last_week['close']:.2f}) > Week {prev_week['week_num']} ({prev_week['start_date']} to {prev_week['end_date']}) High ({prev_week['high']:.2f})?")
-        if last_week['close'] > prev_week['high']:
-            logger.info(f"{log_prefix} [WEEKLY CHECK] PASSED. Initial count is 1.")
-            week_count = 1
-            for i in range(len(sorted_weeks) - 2, 0, -1):
-                current_week = sorted_weeks[i]
-                lookback_week = sorted_weeks[i-1]
-                logger.info(f"{log_prefix} [WEEKLY CHECK] Chained: Is Week {current_week['week_num']} Close ({current_week['close']:.2f}) > Week {lookback_week['week_num']} High ({lookback_week['high']:.2f})?")
-                if current_week['close'] > lookback_week['high']:
-                    week_count += 1
-                    logger.info(f"{log_prefix} [WEEKLY CHECK] PASSED. Count is now {week_count}.")
-                else:
-                    diff = lookback_week['high'] - current_week['close']
-                    logger.info(f"{log_prefix} [WEEKLY CHECK] FAILED. Close ({current_week['close']:.2f}) was {diff:.2f} below required High ({lookback_week['high']:.2f}). Breaking loop.")
-                    break
-        else:
-            diff = prev_week['high'] - last_week['close']
-            logger.info(f"{log_prefix} [WEEKLY CHECK] FAILED. Close ({last_week['close']:.2f}) was {diff:.2f} below required High ({prev_week['high']:.2f}). Weekly count is 0.")
-
-    # --- Monthly Calculation ---
-    month_count = 0
-    monthly_data = collections.defaultdict(lambda: {'high': 0, 'close': None, 'date': None, 'month_key': ''})
-    for candle in completed_candles:
-        candle_date = candle['start_time'].date()
-        month_key = candle_date.strftime('%Y-%m')
-        monthly_data[month_key]['high'] = max(monthly_data[month_key]['high'], candle['high'])
-        if monthly_data[month_key]['date'] is None or candle_date > monthly_data[month_key]['date']:
-            monthly_data[month_key]['close'] = candle['close']
-            monthly_data[month_key]['date'] = candle_date
-            monthly_data[month_key]['month_key'] = month_key
-    
-    current_month_key = today.strftime('%Y-%m')
-    if current_month_key in monthly_data:
-        logger.info(f"{log_prefix} Discarding incomplete month {current_month_key} for monthly calculation.")
-        del monthly_data[current_month_key]
-
-    sorted_months = sorted(monthly_data.values(), key=lambda item: item['date'])
-    if len(sorted_months) >= 2:
-        last_month = sorted_months[-1]
-        prev_month = sorted_months[-2]
-        logger.info(f"{log_prefix} [MONTHLY CHECK] Initial: Is Month {last_month['month_key']} Close ({last_month['close']:.2f}) > Month {prev_month['month_key']} High ({prev_month['high']:.2f})?")
-        if last_month['close'] > prev_month['high']:
-            logger.info(f"{log_prefix} [MONTHLY CHECK] PASSED. Initial count is 1.")
-            month_count = 1
-            for i in range(len(sorted_months) - 2, 0, -1):
-                current_month = sorted_months[i]
-                lookback_month = sorted_months[i-1]
-                logger.info(f"{log_prefix} [MONTHLY CHECK] Chained: Is Month {current_month['month_key']} Close ({current_month['close']:.2f}) > Month {lookback_month['month_key']} High ({lookback_month['high']:.2f})?")
-                if current_month['close'] > lookback_month['high']:
-                    month_count += 1
-                    logger.info(f"{log_prefix} [MONTHLY CHECK] PASSED. Count is now {month_count}.")
-                else:
-                    diff = lookback_month['high'] - current_month['close']
-                    logger.info(f"{log_prefix} [MONTHLY CHECK] FAILED. Close ({current_month['close']:.2f}) was {diff:.2f} below required High ({lookback_month['high']:.2f}). Breaking loop.")
-                    break
-        else:
-            diff = prev_month['high'] - last_month['close']
-            logger.info(f"{log_prefix} [MONTHLY CHECK] FAILED. Close ({last_month['close']:.2f}) was {diff:.2f} below required High ({prev_month['high']:.2f}). Monthly count is 0.")
-
-    logger.info(f"--- {log_prefix} FINAL COUNTS: Months={month_count}, Weeks={week_count}, Days={day_count} ---")
-    return {'months': month_count, 'weeks': week_count, 'days': day_count}
-
-def run_multi_timeframe_higher_high_calculator():
-    logger.info("Multi-Timeframe Higher Highs calculator thread started.")
-    while True:
-        try:
-            logger.info("Performing periodic check for Multi-Timeframe Higher Highs...")
-            with data_lock:
-                dashboard_details_copy = excel_dashboard_details.copy()
-            
-            tokens_to_check = []
-            unique_tokens = set()
-            for token, details_list in dashboard_details_copy.items():
-                if token not in unique_tokens:
-                    for details in details_list:
-                        if details.get('block_type') in ["Full Positions", "Half Positions", "Quarter Positions"]:
-                            tokens_to_check.append({'token': token, 'symbol': details.get("symbol"), 'exchange': details.get("exchange", "NSE").upper()})
-                            unique_tokens.add(token)
-                            break
-            if tokens_to_check:
-                run_on_demand_hh_calculation(tokens_to_check)
-            logger.info("Finished periodic check for Multi-Timeframe Higher Highs. Sleeping for 4 hours.")
-            time.sleep(4 * 60 * 60)
-        except Exception as e:
-            logger.exception(f"Error in Higher Highs calculator thread: {e}")
-            time.sleep(300)
-
-def _sort_single_section(name, start_row, end_row):
-    logger.info(f"Sorting '{name}' section (Rows: {start_row}-{end_row})...")
-    
-    all_symbols_in_col = Dashboard.col_values(col_to_num(FULL_SYMBOL_COL))
-    last_row_in_section = 0
-    for i in range(end_row, start_row - 1, -1):
-        row_index = i - 1
-        if row_index < len(all_symbols_in_col) and all_symbols_in_col[row_index]:
-            last_row_in_section = i
-            break
-
-    if last_row_in_section < start_row:
-        logger.info(f"No data in '{name}' section to sort.")
-        return
-
-    range_to_sort = f"{FULL_EXCHANGE_COL}{start_row}:{FULL_POSITIONS_END_COL}{last_row_in_section}"
-    token_range = f"{ATH_CACHE_Z_COL_DASH}{start_row}:{ATH_CACHE_Z_COL_DASH}{last_row_in_section}"
-    
-    dashboard_data, token_data = Dashboard.get(range_to_sort), ATHCache.get(token_range)
-    
-    expected_rows = last_row_in_section - start_row + 1
-    while len(dashboard_data) < expected_rows:
-        dashboard_data.append([''] * (col_to_num(FULL_POSITIONS_END_COL) - col_to_num(FULL_EXCHANGE_COL) + 1))
-    while len(token_data) < expected_rows:
-        token_data.append([''])
-
-    combined_data, original_data_map = [], {}
-    month_col_index = col_to_num(MONTH_SORT_COL) - col_to_num(FULL_EXCHANGE_COL)
-    symbol_col_index = col_to_num(FULL_SYMBOL_COL) - col_to_num(FULL_EXCHANGE_COL)
-
-    for i, row_data in enumerate(dashboard_data):
-        original_data_map[i] = row_data
-        
-        def parse_sort_string(value_str):
-            months = weeks = days = 0
-            try:
-                if 'Month' in value_str: months = int(re.search(r'(\d+)Month', value_str).group(1))
-                if 'Week' in value_str: weeks = int(re.search(r'(\d+)Week', value_str).group(1))
-                if 'day' in value_str: days = int(re.search(r'(\d+)day', value_str).group(1))
-                # Return a tuple for sorting. Python sorts tuples element by element.
-                return (months, weeks, days)
-            except (AttributeError, ValueError, TypeError):
-                # For "Calculating..." or "0" or errors, return a low-priority tuple
-                return (-1, -1, -1)
-
-        if len(row_data) > symbol_col_index and row_data[symbol_col_index]:
-            sort_val_str = row_data[month_col_index] if len(row_data) > month_col_index else ""
-            sort_key = parse_sort_string(sort_val_str)
-            combined_data.append({'dashboard_row': row_data, 'token_row': token_data[i] if i < len(token_data) else [''], 'sort_key': sort_key})
-
-    if not combined_data:
-        logger.info(f"No non-empty rows to sort in '{name}' section.")
-        return
-
-    sorted_combined_data = sorted(combined_data, key=lambda x: x['sort_key'], reverse=True)
-    
-    final_dashboard_data = [item['dashboard_row'] for item in sorted_combined_data]
-    final_token_data = [item['token_row'] for item in sorted_combined_data]
-    
-    is_already_sorted = True
-    for i, sorted_row in enumerate(final_dashboard_data):
-        if i not in original_data_map or original_data_map[i] != sorted_row:
-            is_already_sorted = False
-            break
-    if len(final_dashboard_data) != len(original_data_map): is_already_sorted = False
-
-    if is_already_sorted:
-        logger.info(f"No change in sort order for '{name}'. Skipping sheet update.")
-        return
-
-    final_dashboard_with_blanks = final_dashboard_data + [[''] * (col_to_num(FULL_POSITIONS_END_COL) - col_to_num(FULL_EXCHANGE_COL) + 1) for _ in range(expected_rows - len(final_dashboard_data))]
-    final_token_with_blanks = final_token_data + [[''] for _ in range(expected_rows - len(final_token_data))]
-
-    logger.info(f"Change in sort order detected for '{name}'. Updating Google Sheet.")
-    Dashboard.update(range_to_sort, final_dashboard_with_blanks, value_input_option='USER_ENTERED')
-    ATHCache.update(token_range, final_token_with_blanks, value_input_option='USER_ENTERED')
-    logger.info(f"Successfully sorted and updated '{name}' on the Google Sheet.")
-# --- MODIFICATION END ---
-
-def sort_all_position_sections():
-    logger.info("Performing automatic sort of all position sections...")
-    position_ranges = {
-        "Full Positions": FULL_POSITIONS_ROWS,
-        "Half Positions": HALF_POSITIONS_ROWS,
-        "Quarter Positions": QUARTER_POSITIONS_ROWS
-    }
-    for name, (start_row, end_row) in position_ranges.items():
-        try:
-            _sort_single_section(name, start_row, end_row)
-        except Exception as e:
-            logger.exception(f"An error occurred during the sorting process for section '{name}': {e}")
-
 def run_background_task_scheduler(initial_data_ready_event): # Main scheduler for slower tasks like sheet scanning and trade setup checks.
     global subscribed_tokens, excel_dashboard_details, excel_orh_setup_details, excel_3pct_setup_details, previous_j_column_state, previous_ah_column_state, previous_breakdown_state
     logger.info("Background task scheduler thread started.")
     logger.info("Scheduler is waiting for initial data fetch to complete...")
     initial_data_ready_event.wait()
     logger.info("Initial data is ready. Scheduler is now running.")
-    last_checked_minute_15min, last_checked_minute_30min, last_checked_minute_1hr, last_scan_time, last_sort_time, last_monthly_high_fetch_time = None, None, None, 0, 0, 0
+    last_checked_minute_15min, last_checked_minute_30min, last_checked_minute_1hr, last_scan_time, last_monthly_high_fetch_time = None, None, None, 0, 0
     try:
         j_values = Dashboard.get(f"{SETUP_LOG_COL}{START_ROW_DATA}:{SETUP_LOG_COL}{SETUP_MAX_ROW}")
         for i, cell in enumerate(j_values): previous_j_column_state[START_ROW_DATA + i] = cell[0] if cell else ""
@@ -1565,9 +1281,7 @@ def run_background_task_scheduler(initial_data_ready_event): # Main scheduler fo
                 with data_lock: unique_tokens_3pct = list(set([(token, details[0]['exchange_type']) for token, details in excel_3pct_setup_details.items() if details]))
                 if unique_tokens_3pct: fetch_monthly_highs(smart_api_obj, unique_tokens_3pct)
                 last_monthly_high_fetch_time = time.time()
-            if time.time() - last_sort_time > 3600: # Changed to sort more frequently
-                sort_all_position_sections()
-                last_sort_time = time.time()
+            
             with data_lock: has_3pct_symbols, has_orh_symbols = bool(excel_3pct_setup_details), bool(excel_orh_setup_details)
             if has_3pct_symbols or has_orh_symbols:
                 with data_lock:
@@ -1684,14 +1398,11 @@ def start_main_application(): # Primary function to initialize connections and r
     logger.info("Performing initial symbol scan...")
     new_dashboard, new_orh, new_3pct, all_tokens_for_subscription = scan_sheet_for_all_symbols(Dashboard, ATHCache)
     excel_dashboard_details, excel_orh_setup_details, excel_3pct_setup_details = new_dashboard, new_orh, new_3pct
-    # --- MODIFICATION START: Set flag after initial scan ---
     initial_scan_complete = True
     logger.info("Initial scan complete. On-demand HH calculations are now active.")
-    # --- MODIFICATION END ---
-    logger.info("Performing initial one-time fetch for monthly highs and portfolio sort...")
+    logger.info("Performing initial one-time fetch for monthly highs...")
     unique_tokens_3pct_startup = list(set([(token, details[0]['exchange_type']) for token, details in excel_3pct_setup_details.items() if details]))
     if unique_tokens_3pct_startup: fetch_monthly_highs(smart_api_obj, unique_tokens_3pct_startup)
-    sort_all_position_sections()
     try:
         logger.info("Initializing SmartAPI WebSocket...")
         smart_ws = MyWebSocketClient(auth_token, API_KEY, CLIENT_CODE, feed_token)
@@ -1724,7 +1435,6 @@ def start_main_application(): # Primary function to initialize connections and r
     threading.Thread(target=run_quote_updater, daemon=True).start()
     threading.Thread(target=run_initial_setup_data_fetch, args=(initial_data_ready,), daemon=True).start()
     threading.Thread(target=run_background_task_scheduler, args=(initial_data_ready,), daemon=True).start()
-    threading.Thread(target=run_multi_timeframe_higher_high_calculator, daemon=True).start()
     logger.info("All systems are go! The application is now running.")
 def run_threaded_logic(): # Starts the main application logic in a separate thread.
     thread = threading.Thread(target=start_main_application, daemon=True)
@@ -1732,4 +1442,3 @@ def run_threaded_logic(): # Starts the main application logic in a separate thre
 if __name__ == "__main__": # Main entry point for Flask + Threaded Logic.
     run_threaded_logic()
     app.run(host="0.0.0.0", port=int(os.environ.get("PORT", 8080)))
-
